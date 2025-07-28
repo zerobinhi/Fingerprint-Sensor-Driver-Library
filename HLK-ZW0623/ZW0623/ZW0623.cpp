@@ -30,6 +30,8 @@
 #define CMD_AUTO_ENROLL 0x31 // 自动注册指令
 #define CMD_CONTROL_BLN 0x3C // 背光灯控制指令
 #define CMD_AUTO_IDENTIFY 0x32 // 自动识别指令
+#define CMD_EMPTY 0x0D       // 清空指纹指令
+#define CMD_CANCEL 0x30      // 取消指令
 
 // 帧结构常量（避免硬编码，增强可维护性）
 #define CHECKSUM_LEN 2         // 校验和长度（字节）
@@ -241,12 +243,76 @@ bool PS_ControlBLN(uint8_t functionCode, uint8_t startColor,
 
     return true;
 }
+/**
+ * @brief 清空所有指纹
+ * @param 无参数
+ * @return 操作是否成功（参数有效且帧组装成功返回true）
+ */
+bool PS_Empty()
+{
+    uint8_t frame[12] = {
+    FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
+    DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
+    PACKET_CMD,                                                                 // 包标识(1字节)
+    0x00, 0x03,                                                                 // 数据长度(2字节)
+    CMD_EMPTY,                                                                  // 指令(1字节)
+    0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+    };
 
+    // 计算并填充校验和（调用通用函数）
+    uint16_t checksum = calculateChecksum(frame, 12);
+    frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出（格式化显示）
+    printf("清空所有指纹控制帧: ");
+    for (uint8_t i = 0; i < 12; i++)
+    {
+        printf("%02X ", frame[i]);
+    }
+    printf("\n");
+
+    return true;
+}
+
+/**
+ * @brief 取消指令
+ * @param 无参数
+ * @return 操作是否成功（参数有效且帧组装成功返回true）
+ */
+bool PS_Cancel()
+{
+    uint8_t frame[12] = {
+    FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
+    DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
+    PACKET_CMD,                                                                 // 包标识(1字节)
+    0x00, 0x03,                                                                 // 数据长度(2字节)
+    CMD_CANCEL,                                                                 // 指令(1字节)
+    0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+    };
+
+    // 计算并填充校验和（调用通用函数）
+    uint16_t checksum = calculateChecksum(frame, 12);
+    frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出（格式化显示）
+    printf("取消指令控制帧: ");
+    for (uint8_t i = 0; i < 12; i++)
+    {
+        printf("%02X ", frame[i]);
+    }
+    printf("\n");
+
+    return true;
+}
 int main()
 {
     // 测试用例
     PS_AutoEnroll(10, 5, false, false, false, true, false, false);
     PS_ControlBLN(BLN_FLASH, LED_ALL, LED_ALL, 3);
 	PS_Autoldentify(0xFFFF, 0x12, false, false, false);
+	PS_Empty();
+	PS_Cancel();
     return 0;
 }
