@@ -14,12 +14,8 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 4,
+          "SelectedChildIndex": 3,
           "Children": [
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
-            },
             {
               "$type": "Bookmark",
               "Name": "ST:130:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
@@ -40,7 +36,7 @@
               "RelativeDocumentMoniker": "ZW0623.cpp",
               "ToolTip": "C:\\Users\\Administrator\\Documents\\GitHub\\Fingerprint-Sensor-Driver-Library\\HLK-ZW0623\\ZW0623\\ZW0623.cpp",
               "RelativeToolTip": "ZW0623.cpp",
-              "ViewState": "AgIAAB4BAAAAAAAAAAAAwCgBAAA1AAAAAAAAAA==",
+              "ViewState": "AgIAACYAAAAAAAAAAAAAAC0AAAAUAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2025-07-26T07:15:46.687Z",
               "EditorCaption": ""

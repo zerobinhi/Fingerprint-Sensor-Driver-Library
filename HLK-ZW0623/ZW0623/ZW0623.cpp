@@ -27,21 +27,90 @@
 #define PACKET_RESPONSE 0x07  // 应答包
 
 // 指令码定义
-#define CMD_AUTO_ENROLL 0x31 // 自动注册指令
-#define CMD_CONTROL_BLN 0x3C // 背光灯控制指令
+#define CMD_AUTO_ENROLL 0x31   // 自动注册指令
+#define CMD_CONTROL_BLN 0x3C   // 背光灯控制指令
 #define CMD_AUTO_IDENTIFY 0x32 // 自动识别指令
-#define CMD_EMPTY 0x0D       // 清空指纹指令
-#define CMD_CANCEL 0x30      // 取消指令
+#define CMD_EMPTY 0x0D         // 清空指纹指令
+#define CMD_CANCEL 0x30        // 取消指令
 
 // 帧结构常量（避免硬编码，增强可维护性）
 #define CHECKSUM_LEN 2         // 校验和长度（字节）
 #define CHECKSUM_START_INDEX 6 // 校验和计算起始索引（固定，从0开始）
 
 // 帧头和设备地址
-uint8_t FRAME_HEADER[2] = { 0xEF, 0x01 };
+const uint8_t FRAME_HEADER[2] = { 0xEF, 0x01 };
 uint8_t DEVICE_ADDRESS[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
 
 // ========================== 通用工具函数 ==========================
+/**
+ * @brief 校验指纹模块接收数据的有效性（重点验证校验和）
+ * @param recvData 接收的数据包缓冲区
+ * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
+ * @return 校验结果：true=有效数据，false=无效数据
+ */
+bool verifyReceivedData(const uint8_t* recvData, uint16_t dataLen)
+{
+    // 基础合法性检查
+    if (recvData == nullptr || dataLen < 12) // 最小应答帧长度为12字节
+    {
+        printf("校验失败：数据为空或长度不足, 最小长度为12字节，当前长度=%d\n", dataLen);
+        return false;
+    }
+
+    // 验证帧头
+    if (recvData[0] != FRAME_HEADER[0] || recvData[1] != FRAME_HEADER[1])
+    {
+        printf("校验失败：帧头不正确, 应为%02X%02X，实际为%02X%02X\n", FRAME_HEADER[0], FRAME_HEADER[1], recvData[0], recvData[1]);
+        return false;
+    }
+    // 验证设备地址
+    for (int i = 2; i < 6; i++)
+    {
+        if (recvData[i] != DEVICE_ADDRESS[i - 2])
+        {
+            printf("校验失败：设备地址不匹配, 应为%02X%02X%02X%02X，实际为%02X%02X%02X%02X\n",
+                DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3],
+                recvData[2], recvData[3], recvData[4], recvData[5]);
+            return false;
+        }
+    }
+    // 验证应答包
+    if (recvData[6] != PACKET_RESPONSE)
+    {
+        printf("校验失败：包标识不正确，应为%02X，实际为%02X\n", PACKET_RESPONSE, recvData[6]);
+        return false;
+    }
+    // 验证长度
+    uint16_t expectedDataLen = (recvData[7] << 8) | recvData[8]; // 数据长度（高字节在前）
+    if (expectedDataLen + 9 != dataLen)                          // 包头(2) + 设备地址(4) + 包标识(1) + 数据长度(2) + 校验和(2)
+    {
+        printf("校验失败：数据长度不匹配（期望=%d，实际=%d）\n", expectedDataLen + 9, dataLen);
+        return false;
+    }
+
+    // 提取校验和（最后2字节，高字节在前）
+    uint16_t receivedChecksum = (recvData[dataLen - 2] << 8) | recvData[dataLen - 1];
+
+    // 计算校验范围数据的累加和（包标识+数据长度+指令结果）
+    // 校验范围：从索引6（包标识）到索引dataLen-3（校验和前1字节）
+    uint16_t calculatedSum = 0;
+    for (uint16_t i = 6; i <= dataLen - 3; i++)
+    {
+        calculatedSum += recvData[i];
+    }
+
+    // 对比校验结果
+    if (calculatedSum == receivedChecksum)
+    {
+        printf("校验成功：校验和匹配（计算值=0x%04X，接收值=0x%04X）\n", calculatedSum, receivedChecksum);
+        return true;
+    }
+    else
+    {
+        printf("校验失败：校验和不匹配（计算值=0x%04X，接收值=0x%04X）\n", calculatedSum, receivedChecksum);
+        return false;
+    }
+}
 /**
  * @brief 计算数据帧的校验和（累加和）
  * @param frame 数据帧缓冲区
@@ -147,9 +216,9 @@ bool PS_Autoldentify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool prep
 {
     // 组装参数（PR，bit0-bit2）
     uint16_t param = 0;
-    param |= (ledControl ? 1 << 0 : 0);     // bit0: 背光灯控制
-    param |= (preprocess ? 1 << 1 : 0);     // bit1: 预处理控制
-    param |= (returnStatus ? 1 << 2 : 0);   // bit2: 状态返回控制
+    param |= (ledControl ? 1 << 0 : 0);   // bit0: 背光灯控制
+    param |= (preprocess ? 1 << 1 : 0);   // bit1: 预处理控制
+    param |= (returnStatus ? 1 << 2 : 0); // bit2: 状态返回控制
 
     // 构建数据帧（共15字节）
     uint8_t frame[17] = {
@@ -158,7 +227,7 @@ bool PS_Autoldentify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool prep
         PACKET_CMD,                                                                 // 包标识(1字节，SC=命令包)
         0x00, 0x08,                                                                 // 数据长度(2字节)
         CMD_AUTO_IDENTIFY,                                                          // 指令码(PS_Autoldentify)
-		scoreLevel,                                                                 // 分数等级(1字节，0x12为默认值)
+        scoreLevel,                                                                 // 分数等级(1字节，0x12为默认值)
         (uint8_t)(ID >> 8), (uint8_t)ID,                                            // ID(高字节在前)(2字节)
         (uint8_t)(param >> 8), (uint8_t)param,                                      // 参数(PR)，高字节在前(2字节)
         0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
@@ -251,12 +320,12 @@ bool PS_ControlBLN(uint8_t functionCode, uint8_t startColor,
 bool PS_Empty()
 {
     uint8_t frame[12] = {
-    FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-    DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-    PACKET_CMD,                                                                 // 包标识(1字节)
-    0x00, 0x03,                                                                 // 数据长度(2字节)
-    CMD_EMPTY,                                                                  // 指令(1字节)
-    0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
+        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                 // 包标识(1字节)
+        0x00, 0x03,                                                                 // 数据长度(2字节)
+        CMD_EMPTY,                                                                  // 指令(1字节)
+        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和（调用通用函数）
@@ -283,12 +352,12 @@ bool PS_Empty()
 bool PS_Cancel()
 {
     uint8_t frame[12] = {
-    FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-    DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-    PACKET_CMD,                                                                 // 包标识(1字节)
-    0x00, 0x03,                                                                 // 数据长度(2字节)
-    CMD_CANCEL,                                                                 // 指令(1字节)
-    0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
+        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                 // 包标识(1字节)
+        0x00, 0x03,                                                                 // 数据长度(2字节)
+        CMD_CANCEL,                                                                 // 指令(1字节)
+        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和（调用通用函数）
@@ -311,8 +380,31 @@ int main()
     // 测试用例
     PS_AutoEnroll(10, 5, false, false, false, true, false, false);
     PS_ControlBLN(BLN_FLASH, LED_ALL, LED_ALL, 3);
-	PS_Autoldentify(0xFFFF, 0x12, false, false, false);
-	PS_Empty();
-	PS_Cancel();
+    PS_Autoldentify(0xFFFF, 0x12, false, false, false);
+    PS_Empty();
+    PS_Cancel();
+
+    // 测试用例：无效应答帧（长度错误）
+    uint8_t shortFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00 };
+    verifyReceivedData(shortFrame, sizeof(shortFrame) / sizeof(shortFrame[0])); // 应返回false
+    // 测试用例：无效应答帧（帧头错误）
+    uint8_t wrongHeaderFrame[] = { 0xEF, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    verifyReceivedData(wrongHeaderFrame, sizeof(wrongHeaderFrame) / sizeof(wrongHeaderFrame[0])); // 应返回false
+    // 测试用例：无效应答帧（设备地址错误）
+    uint8_t wrongAddressFrame[] = { 0xEF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    verifyReceivedData(wrongAddressFrame, sizeof(wrongAddressFrame) / sizeof(wrongAddressFrame[0])); // 应返回false
+    // 测试用例：无效应答帧（包标识错误）
+    uint8_t wrongPacketFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x06, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    verifyReceivedData(wrongPacketFrame, sizeof(wrongPacketFrame) / sizeof(wrongPacketFrame[0])); // 应返回false
+    // 测试用例：无效应答帧（数据长度错误）
+    uint8_t wrongLengthFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x02, 0x00, 0x00, 0x0A };
+    verifyReceivedData(wrongLengthFrame, sizeof(wrongLengthFrame) / sizeof(wrongLengthFrame[0])); // 应返回false
+    // 测试用例：无效应答帧（校验和错误）
+    uint8_t invalidFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0B };
+    verifyReceivedData(invalidFrame, sizeof(invalidFrame) / sizeof(invalidFrame[0])); // 应返回false
+    // 测试用例：有效应答帧（示例数据）
+    uint8_t validFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    verifyReceivedData(validFrame, sizeof(validFrame) / sizeof(validFrame[0])); // 应返回tre
+    // 其他测试用例可以继续添加...
     return 0;
 }
