@@ -29,6 +29,7 @@
 // 指令码定义
 #define CMD_AUTO_ENROLL 0x31 // 自动注册指令
 #define CMD_CONTROL_BLN 0x3C // 背光灯控制指令
+#define CMD_AUTO_IDENTIFY 0x32 // 自动识别指令
 
 // 帧结构常量（避免硬编码，增强可维护性）
 #define CHECKSUM_LEN 2         // 校验和长度（字节）
@@ -116,7 +117,7 @@ bool PS_AutoEnroll(uint16_t ID, uint8_t enrollTimes,
     frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
-    // 6. 调试输出（格式化显示）
+    // 调试输出（格式化显示）
     printf("发送自动注册帧: ");
     for (uint8_t i = 0; i < 17; i++)
     {
@@ -134,12 +135,13 @@ bool PS_AutoEnroll(uint16_t ID, uint8_t enrollTimes,
  * @param ID 指纹ID号（2字节，高字节在前）
  *           - 具体数值（如1对应0x0001）：验证指定ID的指纹
  *           - 0xFFFF：验证所有已注册的指纹
+ * @param scoreLevel 分数等级，系统根据该值设定比对阀值（1-28,默认为0x12）
  * @param ledControl 采图背光灯控制（bit0）：false=常亮；true=采图成功后熄灭
  * @param preprocess 采图预处理控制（bit1）：false=不预处理；true=开启预处理
  * @param returnStatus 识别状态返回控制（bit2）：false=返回状态；true=不返回状态
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool PS_Autoldentify(uint16_t ID, bool ledControl, bool preprocess, bool returnStatus)
+bool PS_Autoldentify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
 {
     // 组装参数（PR，bit0-bit2）
     uint16_t param = 0;
@@ -152,8 +154,9 @@ bool PS_Autoldentify(uint16_t ID, bool ledControl, bool preprocess, bool returnS
         FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
         DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
         PACKET_CMD,                                                                 // 包标识(1字节，SC=命令包)
-        0x00, 0x06,                                                                 // 数据长度(2字节)
-        0x32,                                                                       // 指令码(PS_Autoldentify)
+        0x00, 0x08,                                                                 // 数据长度(2字节)
+        CMD_AUTO_IDENTIFY,                                                          // 指令码(PS_Autoldentify)
+		scoreLevel,                                                                 // 分数等级(1字节，0x12为默认值)
         (uint8_t)(ID >> 8), (uint8_t)ID,                                            // ID(高字节在前)(2字节)
         (uint8_t)(param >> 8), (uint8_t)param,                                      // 参数(PR)，高字节在前(2字节)
         0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
@@ -161,12 +164,12 @@ bool PS_Autoldentify(uint16_t ID, bool ledControl, bool preprocess, bool returnS
 
     // 计算并填充校验和
     uint16_t checksum = calculateChecksum(frame, 15);
-    frame[13] = (uint8_t)(checksum >> 8);   // 校验和高字节
-    frame[14] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+    frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出
     printf("发送自动识别帧: ");
-    for (uint8_t i = 0; i < 15; i++)
+    for (uint8_t i = 0; i < 17; i++)
     {
         printf("%02X ", frame[i]);
     }
@@ -188,7 +191,7 @@ bool PS_Autoldentify(uint16_t ID, bool ledControl, bool preprocess, bool returnS
 bool PS_ControlBLN(uint8_t functionCode, uint8_t startColor,
     uint8_t endColor, uint8_t cycleTimes)
 {
-    // 1. 参数合法性检查
+    // 参数合法性检查
     if (functionCode < BLN_BREATH || functionCode > BLN_FADE_OUT)
     {
         printf("错误: 功能码必须在1-6之间（参考BLN_xxx宏定义）\n");
@@ -244,5 +247,6 @@ int main()
     // 测试用例
     PS_AutoEnroll(10, 5, false, false, false, true, false, false);
     PS_ControlBLN(BLN_FLASH, LED_ALL, LED_ALL, 3);
+	PS_Autoldentify(0xFFFF, 0x12, false, false, false);
     return 0;
 }

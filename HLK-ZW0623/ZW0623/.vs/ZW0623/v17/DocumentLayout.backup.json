@@ -1,9 +1,9 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\Administrator\\source\\repos\\ZW0623\\",
+  "WorkspaceRootPath": "C:\\Users\\Administrator\\Documents\\GitHub\\Fingerprint-Sensor-Driver-Library\\HLK-ZW0623\\ZW0623\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{E16E3ACB-EAA8-4AA2-B7F0-259DC4B19C0A}|ZW0623.vcxproj|C:\\Users\\Administrator\\source\\repos\\ZW0623\\ZW0623.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{E16E3ACB-EAA8-4AA2-B7F0-259DC4B19C0A}|ZW0623.vcxproj|C:\\Users\\Administrator\\Documents\\GitHub\\Fingerprint-Sensor-Driver-Library\\HLK-ZW0623\\ZW0623\\ZW0623.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{E16E3ACB-EAA8-4AA2-B7F0-259DC4B19C0A}|ZW0623.vcxproj|solutionrelative:ZW0623.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -36,11 +36,11 @@
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "ZW0623.cpp",
-              "DocumentMoniker": "C:\\Users\\Administrator\\source\\repos\\ZW0623\\ZW0623.cpp",
+              "DocumentMoniker": "C:\\Users\\Administrator\\Documents\\GitHub\\Fingerprint-Sensor-Driver-Library\\HLK-ZW0623\\ZW0623\\ZW0623.cpp",
               "RelativeDocumentMoniker": "ZW0623.cpp",
-              "ToolTip": "C:\\Users\\Administrator\\source\\repos\\ZW0623\\ZW0623.cpp",
-              "RelativeToolTip": "ZW0623.cpp",
-              "ViewState": "AgIAADkAAAAAAAAAAAAswDcAAAAeAAAAAAAAAA==",
+              "ToolTip": "C:\\Users\\Administrator\\Documents\\GitHub\\Fingerprint-Sensor-Driver-Library\\HLK-ZW0623\\ZW0623\\ZW0623.cpp*",
+              "RelativeToolTip": "ZW0623.cpp*",
+              "ViewState": "AgIAAJoAAAAAAAAAAADwv6sAAAAeAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2025-07-26T07:15:46.687Z",
               "EditorCaption": ""
