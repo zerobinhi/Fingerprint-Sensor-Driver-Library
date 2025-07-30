@@ -1,3 +1,2 @@
 ﻿  ZW0623.cpp
-C:\Users\Administrator\Documents\GitHub\Fingerprint-Sensor-Driver-Library\HLK-ZW0623\ZW0623\ZW0623.cpp(351,25): warning C4333: “>>”: 右移位数过大，数据将丢失
   ZW0623.vcxproj -> C:\Users\Administrator\Documents\GitHub\Fingerprint-Sensor-Driver-Library\HLK-ZW0623\ZW0623\x64\Debug\ZW0623.exe

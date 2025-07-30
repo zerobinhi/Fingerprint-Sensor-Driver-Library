@@ -1,5 +1,7 @@
 ﻿#include <stdio.h>
+#include <string.h>
 #include <cstdint> // 推荐使用C99标准整数类型，增强跨平台兼容性
+#define esp_err_t bool
 
 // ========================== 通用宏定义 ==========================
 // 功能码宏定义（LED控制）
@@ -41,9 +43,10 @@
 #define CHECKSUM_LEN 2         // 校验和长度（字节）
 #define CHECKSUM_START_INDEX 6 // 校验和计算起始索引（固定，从0开始）
 
-// 帧头和设备地址
-const uint8_t FRAME_HEADER[2] = { 0xEF, 0x01 };
-uint8_t g_deviceAddress[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+const uint8_t FRAME_HEADER[2] = { 0xEF, 0x01 };          // 帧头
+uint8_t g_deviceAddress[4] = { 0xFF, 0xFF, 0xFF, 0xFF }; // 设备地址
+uint8_t g_fingerIDArray[100] = { 0xFF };                 // 指纹模块最大容量为100枚指纹
+uint8_t g_fingerNumber = 0;                            // 有效指纹数量
 
 // ========================== 通用工具函数 ==========================
 /**
@@ -52,7 +55,7 @@ uint8_t g_deviceAddress[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
  * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
  * @return 校验结果：true=有效数据，false=无效数据
  */
-bool verify_received_data(const uint8_t* recvData, uint16_t dataLen)
+esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 {
     // 基础合法性检查
     if (recvData == nullptr || dataLen < 12) // 最小应答帧长度为12字节
@@ -106,12 +109,12 @@ bool verify_received_data(const uint8_t* recvData, uint16_t dataLen)
     // 对比校验结果
     if (calculatedSum == receivedChecksum)
     {
-        printf("校验成功：校验和匹配（计算值=0x%04X，接收值=0x%04X）\n", calculatedSum, receivedChecksum);
+        printf("校验成功：校验和匹配\n");
         return true;
     }
     else
     {
-        printf("校验失败：校验和不匹配（计算值=0x%04X，接收值=0x%04X）\n", calculatedSum, receivedChecksum);
+        printf("校验失败：校验和不匹配\n");
         return false;
     }
 }
@@ -153,7 +156,7 @@ uint16_t calculate_checksum(const uint8_t* frame, uint16_t frame_len)
  * @param requireRemove 手指离开要求（bit5）：false=需离开；true=无需离开
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool auto_enroll(uint16_t ID, uint8_t enrollTimes,
+esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
     bool ledControl, bool preprocess,
     bool returnStatus, bool allowOverwrite,
     bool allowDuplicate, bool requireRemove)
@@ -221,7 +224,7 @@ bool auto_enroll(uint16_t ID, uint8_t enrollTimes,
  * @param returnStatus 识别状态返回控制（bit2）：false=返回状态；true=不返回状态
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
+esp_err_t auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
 {
     // 组装参数（PR，bit0-bit2）
     uint16_t param = 0;
@@ -268,7 +271,7 @@ bool auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool prepro
  * @param cycleTimes 循环次数（仅功能码1-呼吸灯/2-闪烁灯有效，0=无限循环）
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool control_led(uint8_t functionCode, uint8_t startColor,
+esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
     uint8_t endColor, uint8_t cycleTimes)
 {
     // 参数合法性检查
@@ -327,7 +330,7 @@ bool control_led(uint8_t functionCode, uint8_t startColor,
  * @param count：删除数量
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool delet_char(uint16_t ID, uint8_t count)
+esp_err_t delet_char(uint16_t ID, uint16_t count)
 {
     // 参数合法性检查
     if (ID >= 100)
@@ -376,7 +379,7 @@ bool delet_char(uint16_t ID, uint8_t count)
  * @param 无参数
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool empty()
+esp_err_t empty()
 {
     uint8_t frame[12] = {
         FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
@@ -408,7 +411,7 @@ bool empty()
  * @param 无参数
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool cancel()
+esp_err_t cancel()
 {
     uint8_t frame[12] = {
         FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
@@ -439,7 +442,7 @@ bool cancel()
  * @param 无参数
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool sleep()
+esp_err_t sleep()
 {
     uint8_t frame[12] = {
         FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
@@ -470,7 +473,7 @@ bool sleep()
  * @param page 页码（0-4）
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool read_index_table(uint8_t page)
+esp_err_t read_index_table(uint8_t page)
 {
     uint8_t frame[13] = {
         FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
@@ -498,9 +501,66 @@ bool read_index_table(uint8_t page)
     return true;
 }
 
+/**
+ * @brief 解析读索引表命令返回的数据帧，提取指纹ID信息
+ * @param recvData 接收的数据包缓冲区
+ * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
+ * @return 操作是否成功（参数有效且解析成功返回ESP_OK，否则返回对应错误码）
+ */
+esp_err_t fingerprint_parse_frame(const uint8_t* recvData, uint16_t dataLen)
+{
+    if (!verify_received_data(recvData, dataLen))
+    {
+        return false; // 保持你的返回值风格
+    }
+
+    memset(g_fingerIDArray, 0xFF, sizeof(g_fingerIDArray));
+    g_fingerNumber = 0;
+
+    // 优化的解析部分
+    uint8_t mask[] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
+    uint8_t temp_num = 0; // 局部变量暂存计数
+
+    for (uint8_t i = 10; i <= 22; i++)
+    {
+        uint8_t byte = recvData[i];
+        if (byte == 0)
+            continue; // 跳过全0字节
+
+        for (uint8_t j = 0; j < 8; j++)
+        {
+            if (byte & mask[j])
+            {
+                g_fingerIDArray[temp_num] = (i - 10) * 8 + j;
+                temp_num++;
+                if (temp_num >= 100)
+                    goto end_parse; // 满了直接跳出
+            }
+        }
+    }
+end_parse:
+    g_fingerNumber = temp_num; // 同步计数
+
+    // 打印部分不变
+    if (g_fingerNumber > 0)
+    {
+        printf("检测到%d个指纹ID: ", g_fingerNumber);
+        for (size_t i = 0; i < g_fingerNumber; i++)
+        {
+            printf("%d ", g_fingerIDArray[i]);
+        }
+        printf("\n");
+    }
+    else
+    {
+        printf("未检测到任何指纹\n");
+    }
+
+    return true;
+}
 int main()
 {
-    // 测试用例
+#if 0
     auto_enroll(10, 5, false, false, false, true, false, false);
     control_led(BLN_FLASH, LED_ALL, LED_ALL, 3);
     auto_identify(0xFFFF, 0x12, false, false, false);
@@ -532,6 +592,41 @@ int main()
     uint8_t validFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
     verify_received_data(validFrame, sizeof(validFrame) / sizeof(validFrame[0])); // 应返回true
     // 其他测试用例可以继续添加...
+#else
+    // 示例1：ID=0,1,2（第11字节为0x07，二进制00000111）
+    uint8_t frame1[] = {
+        0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00,
+        0x23, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x31 };
+    uint16_t frame1_len = sizeof(frame1) / sizeof(frame1[0]);
 
+    // 示例2：ID=0,1,2,7（第11字节为0x87，二进制10000111）
+    uint8_t frame2[] = {
+        0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00,
+        0x23, 0x00, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xB1 };
+    uint16_t frame2_len = sizeof(frame2) / sizeof(frame2[0]);
+
+    // 示例3：ID=0,1,2,7,99（第11字节0x87，第23字节0x08）
+    // 注：99 = (22-10)*8 + 3 → 第22索引字节（0x08，二进制1000）的第3位被置位
+    uint8_t frame3[] = {
+        0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00,
+        0x23, 0x00, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0xB9 };
+    uint16_t frame3_len = sizeof(frame3) / sizeof(frame3[0]);
+    fingerprint_parse_frame(frame1, frame1_len);
+    fingerprint_parse_frame(frame2, frame2_len);
+    fingerprint_parse_frame(frame3, frame3_len);
+
+#endif
     return 0;
 }
