@@ -120,24 +120,24 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 }
 /**
  * @brief 计算数据帧的校验和（累加和）
- * @param frame 数据帧缓冲区
- * @param frame_len 数据帧总长度
+ * @param recvData 数据帧缓冲区
+ * @param dataLen 数据帧总长度
  * @return 计算得到的16位校验和（高字节在前）
  * @note 校验和范围：从第6字节（CHECKSUM_START_INDEX）到校验和前1字节
  */
-uint16_t calculate_checksum(const uint8_t* frame, uint16_t frame_len)
+uint16_t calculate_checksum(const uint8_t* recvData, uint16_t dataLen)
 {
-    if (frame == nullptr || frame_len <= CHECKSUM_START_INDEX + CHECKSUM_LEN)
+    if (recvData == nullptr || dataLen <= CHECKSUM_START_INDEX + CHECKSUM_LEN)
     {
         return 0; // 无效参数，返回0（实际应用可添加错误日志）
     }
     uint16_t checksum = 0;
-    uint8_t checksum_end_index = frame_len - CHECKSUM_LEN - 1; // 校验和前1字节索引
+    uint8_t checksum_end_index = dataLen - CHECKSUM_LEN - 1; // 校验和前1字节索引
 
     // 累加指定范围内的所有字节
     for (uint8_t i = CHECKSUM_START_INDEX; i <= checksum_end_index; i++)
     {
-        checksum += frame[i];
+        checksum += recvData[i];
     }
 
     return checksum;
