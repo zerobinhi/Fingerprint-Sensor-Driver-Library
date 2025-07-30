@@ -1,4 +1,4 @@
-﻿#include <iostream>
+﻿#include <stdio.h>
 #include <cstdint> // 推荐使用C99标准整数类型，增强跨平台兼容性
 
 // ========================== 通用宏定义 ==========================
@@ -27,11 +27,15 @@
 #define PACKET_RESPONSE 0x07  // 应答包
 
 // 指令码定义
-#define CMD_AUTO_ENROLL 0x31   // 自动注册指令
-#define CMD_CONTROL_BLN 0x3C   // 背光灯控制指令
-#define CMD_AUTO_IDENTIFY 0x32 // 自动识别指令
-#define CMD_EMPTY 0x0D         // 清空指纹指令
-#define CMD_CANCEL 0x30        // 取消指令
+#define CMD_AUTO_ENROLL 0x31      // 自动注册指令
+#define CMD_CONTROL_BLN 0x3C      // 背光灯控制指令
+#define CMD_AUTO_IDENTIFY 0x32    // 自动识别指令
+#define CMD_DELET_CHAR 0x0C       // 删除指纹指令
+#define CMD_EMPTY 0x0D            // 清空指纹指令
+#define CMD_HAND_SHAKE 0x35       // 握手指令（可选）
+#define CMD_CANCEL 0x30           // 取消指令
+#define CMD_READ_INDEX_TABLE 0x1F // 读索引表指令
+#define CMD_SLEEP 0x33            // 休眠指令
 
 // 帧结构常量（避免硬编码，增强可维护性）
 #define CHECKSUM_LEN 2         // 校验和长度（字节）
@@ -39,7 +43,7 @@
 
 // 帧头和设备地址
 const uint8_t FRAME_HEADER[2] = { 0xEF, 0x01 };
-uint8_t DEVICE_ADDRESS[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+uint8_t g_deviceAddress[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
 
 // ========================== 通用工具函数 ==========================
 /**
@@ -48,7 +52,7 @@ uint8_t DEVICE_ADDRESS[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
  * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
  * @return 校验结果：true=有效数据，false=无效数据
  */
-bool verifyReceivedData(const uint8_t* recvData, uint16_t dataLen)
+bool verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 {
     // 基础合法性检查
     if (recvData == nullptr || dataLen < 12) // 最小应答帧长度为12字节
@@ -66,10 +70,10 @@ bool verifyReceivedData(const uint8_t* recvData, uint16_t dataLen)
     // 验证设备地址
     for (int i = 2; i < 6; i++)
     {
-        if (recvData[i] != DEVICE_ADDRESS[i - 2])
+        if (recvData[i] != g_deviceAddress[i - 2])
         {
             printf("校验失败：设备地址不匹配, 应为%02X%02X%02X%02X，实际为%02X%02X%02X%02X\n",
-                DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3],
+                g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3],
                 recvData[2], recvData[3], recvData[4], recvData[5]);
             return false;
         }
@@ -118,7 +122,7 @@ bool verifyReceivedData(const uint8_t* recvData, uint16_t dataLen)
  * @return 计算得到的16位校验和（高字节在前）
  * @note 校验和范围：从第6字节（CHECKSUM_START_INDEX）到校验和前1字节
  */
-uint16_t calculateChecksum(const uint8_t* frame, uint8_t frame_len)
+uint16_t calculate_checksum(const uint8_t* frame, uint16_t frame_len)
 {
     if (frame == nullptr || frame_len <= CHECKSUM_START_INDEX + CHECKSUM_LEN)
     {
@@ -149,12 +153,17 @@ uint16_t calculateChecksum(const uint8_t* frame, uint8_t frame_len)
  * @param requireRemove 手指离开要求（bit5）：false=需离开；true=无需离开
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool PS_AutoEnroll(uint16_t ID, uint8_t enrollTimes,
+bool auto_enroll(uint16_t ID, uint8_t enrollTimes,
     bool ledControl, bool preprocess,
     bool returnStatus, bool allowOverwrite,
     bool allowDuplicate, bool requireRemove)
 {
     // 参数合法性检查
+    if (ID >= 100)
+    {
+        printf("错误: 指纹ID号必须在0-99之间\n");
+        return false;
+    }
     if (enrollTimes > 5)
     {
         printf("错误: 录入次数必须在0-5之间\n");
@@ -172,25 +181,25 @@ bool PS_AutoEnroll(uint16_t ID, uint8_t enrollTimes,
 
     // 计算数据帧长度：帧头(6) + 命令码(2) + 数据长度和指令(2) + ID(2) + 录入次数(1) + 参数(2) + 校验和(2) = 17
     uint8_t frame[17] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                 // 包标识(1字节)
-        0x00, 0x08,                                                                 // 数据长度(2字节)
-        CMD_AUTO_ENROLL,                                                            // 指令(1字节)
-        (uint8_t)(ID >> 8), (uint8_t)ID,                                            // ID(高字节在前)(2字节)
-        enrollTimes,                                                                // 录入次数(1字节)
-        (uint8_t)(param >> 8), (uint8_t)param,                                      // 参数(param)，高字节在前(2字节)
-        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x08,                                                                     // 数据长度(2字节)
+        CMD_AUTO_ENROLL,                                                                // 指令(1字节)
+        (uint8_t)(ID >> 8), (uint8_t)ID,                                                // ID(高字节在前)(2字节)
+        enrollTimes,                                                                    // 录入次数(1字节)
+        (uint8_t)(param >> 8), (uint8_t)param,                                          // 参数(param)，高字节在前(2字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和（使用通用函数）
-    uint16_t checksum = calculateChecksum(frame, 17);
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出（格式化显示）
     printf("发送自动注册帧: ");
-    for (uint8_t i = 0; i < 17; i++)
+    for (uint8_t i = 0; i < sizeof(frame); i++)
     {
         printf("%02X ", frame[i]);
     }
@@ -212,7 +221,7 @@ bool PS_AutoEnroll(uint16_t ID, uint8_t enrollTimes,
  * @param returnStatus 识别状态返回控制（bit2）：false=返回状态；true=不返回状态
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool PS_Autoldentify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
+bool auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
 {
     // 组装参数（PR，bit0-bit2）
     uint16_t param = 0;
@@ -222,25 +231,25 @@ bool PS_Autoldentify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool prep
 
     // 构建数据帧（共15字节）
     uint8_t frame[17] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                 // 包标识(1字节，SC=命令包)
-        0x00, 0x08,                                                                 // 数据长度(2字节)
-        CMD_AUTO_IDENTIFY,                                                          // 指令码(PS_Autoldentify)
-        scoreLevel,                                                                 // 分数等级(1字节，0x12为默认值)
-        (uint8_t)(ID >> 8), (uint8_t)ID,                                            // ID(高字节在前)(2字节)
-        (uint8_t)(param >> 8), (uint8_t)param,                                      // 参数(PR)，高字节在前(2字节)
-        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节，SC=命令包)
+        0x00, 0x08,                                                                     // 数据长度(2字节)
+        CMD_AUTO_IDENTIFY,                                                              // 指令码(PS_Autoldentify)
+        scoreLevel,                                                                     // 分数等级(1字节，0x12为默认值)
+        (uint8_t)(ID >> 8), (uint8_t)ID,                                                // ID(高字节在前)(2字节)
+        (uint8_t)(param >> 8), (uint8_t)param,                                          // 参数(PR)，高字节在前(2字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和
-    uint16_t checksum = calculateChecksum(frame, 15);
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出
     printf("发送自动识别帧: ");
-    for (uint8_t i = 0; i < 17; i++)
+    for (uint8_t i = 0; i < sizeof(frame); i++)
     {
         printf("%02X ", frame[i]);
     }
@@ -259,7 +268,7 @@ bool PS_Autoldentify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool prep
  * @param cycleTimes 循环次数（仅功能码1-呼吸灯/2-闪烁灯有效，0=无限循环）
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool PS_ControlBLN(uint8_t functionCode, uint8_t startColor,
+bool control_led(uint8_t functionCode, uint8_t startColor,
     uint8_t endColor, uint8_t cycleTimes)
 {
     // 参数合法性检查
@@ -282,26 +291,26 @@ bool PS_ControlBLN(uint8_t functionCode, uint8_t startColor,
     }
 
     uint8_t frame[16] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                 // 包标识(1字节)
-        0x00, 0x07,                                                                 // 数据长度(2字节)
-        CMD_CONTROL_BLN,                                                            // 指令(1字节)
-        functionCode,                                                               // 功能码FC(1字节)
-        startColor,                                                                 // 起始颜色ST(1字节)
-        endColor,                                                                   // 结束颜色ED(1字节)
-        cycleTimes,                                                                 // 循环次数TS(1字节)
-        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x07,                                                                     // 数据长度(2字节)
+        CMD_CONTROL_BLN,                                                                // 指令(1字节)
+        functionCode,                                                                   // 功能码FC(1字节)
+        startColor,                                                                     // 起始颜色ST(1字节)
+        endColor,                                                                       // 结束颜色ED(1字节)
+        cycleTimes,                                                                     // 循环次数TS(1字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和（调用通用函数）
-    uint16_t checksum = calculateChecksum(frame, 16);
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出（格式化显示）
     printf("发送LED控制帧: ");
-    for (uint8_t i = 0; i < 16; i++)
+    for (uint8_t i = 0; i < sizeof(frame); i++)
     {
         printf("%02X ", frame[i]);
     }
@@ -313,29 +322,79 @@ bool PS_ControlBLN(uint8_t functionCode, uint8_t startColor,
     return true;
 }
 /**
+ * @brief 删除一定数量的指纹
+ * @param ID：指纹号
+ * @param count：删除数量
+ * @return 操作是否成功（参数有效且帧组装成功返回true）
+ */
+bool delet_char(uint16_t ID, uint8_t count)
+{
+    // 参数合法性检查
+    if (ID >= 100)
+    {
+        printf("错误: 指纹ID号必须在0-99之间\n");
+        return false;
+    }
+    if (count == 0 || count > 5)
+    {
+        printf("错误: 删除数量必须在1-100之间\n");
+        return false;
+    }
+
+    uint8_t frame[16] = {
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x07,                                                                     // 数据长度(2字节)
+        CMD_DELET_CHAR,                                                                 // 指令(1字节)
+        (uint8_t)(ID >> 8), (uint8_t)ID,                                                // ID(高字节在前)(2字节)
+        (uint8_t)(count >> 8), (uint8_t)count,                                          // 删除数量(2字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+    };
+
+    // 计算并填充校验和（调用通用函数）
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+    frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出（格式化显示）
+    printf("删除指纹: ");
+    for (uint8_t i = 0; i < sizeof(frame); i++)
+    {
+        printf("%02X ", frame[i]);
+    }
+    printf("\n");
+
+    // 实际应用中添加帧发送逻辑（如UART发送）
+    // return UART_Send(frame, frame_len);
+
+    return true;
+}
+
+/**
  * @brief 清空所有指纹
  * @param 无参数
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool PS_Empty()
+bool empty()
 {
     uint8_t frame[12] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                 // 包标识(1字节)
-        0x00, 0x03,                                                                 // 数据长度(2字节)
-        CMD_EMPTY,                                                                  // 指令(1字节)
-        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x03,                                                                     // 数据长度(2字节)
+        CMD_EMPTY,                                                                      // 指令(1字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和（调用通用函数）
-    uint16_t checksum = calculateChecksum(frame, 12);
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出（格式化显示）
     printf("清空所有指纹控制帧: ");
-    for (uint8_t i = 0; i < 12; i++)
+    for (uint8_t i = 0; i < sizeof(frame); i++)
     {
         printf("%02X ", frame[i]);
     }
@@ -349,25 +408,25 @@ bool PS_Empty()
  * @param 无参数
  * @return 操作是否成功（参数有效且帧组装成功返回true）
  */
-bool PS_Cancel()
+bool cancel()
 {
     uint8_t frame[12] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                           // 包头(2字节)
-        DEVICE_ADDRESS[0], DEVICE_ADDRESS[1], DEVICE_ADDRESS[2], DEVICE_ADDRESS[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                 // 包标识(1字节)
-        0x00, 0x03,                                                                 // 数据长度(2字节)
-        CMD_CANCEL,                                                                 // 指令(1字节)
-        0x00, 0x00                                                                  // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x03,                                                                     // 数据长度(2字节)
+        CMD_CANCEL,                                                                     // 指令(1字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
     };
 
     // 计算并填充校验和（调用通用函数）
-    uint16_t checksum = calculateChecksum(frame, 12);
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出（格式化显示）
-    printf("取消指令控制帧: ");
-    for (uint8_t i = 0; i < 12; i++)
+    printf("取消指令: ");
+    for (uint8_t i = 0; i < sizeof(frame); i++)
     {
         printf("%02X ", frame[i]);
     }
@@ -375,36 +434,104 @@ bool PS_Cancel()
 
     return true;
 }
+/**
+ * @brief 休眠指令
+ * @param 无参数
+ * @return 操作是否成功（参数有效且帧组装成功返回true）
+ */
+bool sleep()
+{
+    uint8_t frame[12] = {
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x03,                                                                     // 数据长度(2字节)
+        CMD_SLEEP,                                                                      // 指令(1字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+    };
+
+    // 计算并填充校验和（调用通用函数）
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+    frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出（格式化显示）
+    printf("休眠指令: ");
+    for (uint8_t i = 0; i < sizeof(frame); i++)
+    {
+        printf("%02X ", frame[i]);
+    }
+    printf("\n");
+
+    return true;
+}
+/**
+ * @brief 读索引表
+ * @param page 页码（0-4）
+ * @return 操作是否成功（参数有效且帧组装成功返回true）
+ */
+bool read_index_table(uint8_t page)
+{
+    uint8_t frame[13] = {
+        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                     // 包标识(1字节)
+        0x00, 0x04,                                                                     // 数据长度(2字节)
+        CMD_READ_INDEX_TABLE,                                                           // 指令(1字节)
+        page,                                                                           // 页码(1字节)
+        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+    };
+
+    // 计算并填充校验和（调用通用函数）
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+    frame[11] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[12] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出（格式化显示）
+    printf("读索引表指令: ");
+    for (uint8_t i = 0; i < sizeof(frame); i++)
+    {
+        printf("%02X ", frame[i]);
+    }
+    printf("\n");
+
+    return true;
+}
+
 int main()
 {
     // 测试用例
-    PS_AutoEnroll(10, 5, false, false, false, true, false, false);
-    PS_ControlBLN(BLN_FLASH, LED_ALL, LED_ALL, 3);
-    PS_Autoldentify(0xFFFF, 0x12, false, false, false);
-    PS_Empty();
-    PS_Cancel();
+    auto_enroll(10, 5, false, false, false, true, false, false);
+    control_led(BLN_FLASH, LED_ALL, LED_ALL, 3);
+    auto_identify(0xFFFF, 0x12, false, false, false);
+    empty();
+    cancel();
+    delet_char(11, 3);
+    sleep();
+    read_index_table(0);
 
     // 测试用例：无效应答帧（长度错误）
     uint8_t shortFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00 };
-    verifyReceivedData(shortFrame, sizeof(shortFrame) / sizeof(shortFrame[0])); // 应返回false
+    verify_received_data(shortFrame, sizeof(shortFrame) / sizeof(shortFrame[0])); // 应返回false
     // 测试用例：无效应答帧（帧头错误）
     uint8_t wrongHeaderFrame[] = { 0xEF, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
-    verifyReceivedData(wrongHeaderFrame, sizeof(wrongHeaderFrame) / sizeof(wrongHeaderFrame[0])); // 应返回false
+    verify_received_data(wrongHeaderFrame, sizeof(wrongHeaderFrame) / sizeof(wrongHeaderFrame[0])); // 应返回false
     // 测试用例：无效应答帧（设备地址错误）
     uint8_t wrongAddressFrame[] = { 0xEF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
-    verifyReceivedData(wrongAddressFrame, sizeof(wrongAddressFrame) / sizeof(wrongAddressFrame[0])); // 应返回false
+    verify_received_data(wrongAddressFrame, sizeof(wrongAddressFrame) / sizeof(wrongAddressFrame[0])); // 应返回false
     // 测试用例：无效应答帧（包标识错误）
     uint8_t wrongPacketFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x06, 0x00, 0x03, 0x00, 0x00, 0x0A };
-    verifyReceivedData(wrongPacketFrame, sizeof(wrongPacketFrame) / sizeof(wrongPacketFrame[0])); // 应返回false
+    verify_received_data(wrongPacketFrame, sizeof(wrongPacketFrame) / sizeof(wrongPacketFrame[0])); // 应返回false
     // 测试用例：无效应答帧（数据长度错误）
     uint8_t wrongLengthFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x02, 0x00, 0x00, 0x0A };
-    verifyReceivedData(wrongLengthFrame, sizeof(wrongLengthFrame) / sizeof(wrongLengthFrame[0])); // 应返回false
+    verify_received_data(wrongLengthFrame, sizeof(wrongLengthFrame) / sizeof(wrongLengthFrame[0])); // 应返回false
     // 测试用例：无效应答帧（校验和错误）
     uint8_t invalidFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0B };
-    verifyReceivedData(invalidFrame, sizeof(invalidFrame) / sizeof(invalidFrame[0])); // 应返回false
+    verify_received_data(invalidFrame, sizeof(invalidFrame) / sizeof(invalidFrame[0])); // 应返回false
     // 测试用例：有效应答帧（示例数据）
     uint8_t validFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
-    verifyReceivedData(validFrame, sizeof(validFrame) / sizeof(validFrame[0])); // 应返回tre
+    verify_received_data(validFrame, sizeof(validFrame) / sizeof(validFrame[0])); // 应返回true
     // 其他测试用例可以继续添加...
+
     return 0;
 }
