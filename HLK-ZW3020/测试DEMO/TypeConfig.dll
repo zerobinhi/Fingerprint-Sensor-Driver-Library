@@ -1,0 +1,14 @@
+[SensorInfo]
+nSensorNum=1
+
+;通用类型
+
+[0]
+TypeName=中面积(录入采集6次)
+CharLen=1200
+nEn_Num=6
+nMaxTry=6
+Img_W=96
+Img_H=112
+bEnrollImg=0
+

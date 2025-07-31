@@ -2,6 +2,8 @@
 #include <string.h>
 #include <cstdint> // 推荐使用C99标准整数类型，增强跨平台兼容性
 #define esp_err_t bool
+#define ESP_OK true
+#define ESP_FAIL false
 
 // ========================== 通用宏定义 ==========================
 // 功能码宏定义（LED控制）
@@ -34,7 +36,6 @@
 #define CMD_AUTO_IDENTIFY 0x32    // 自动识别指令
 #define CMD_DELET_CHAR 0x0C       // 删除指纹指令
 #define CMD_EMPTY 0x0D            // 清空指纹指令
-#define CMD_HAND_SHAKE 0x35       // 握手指令（可选）
 #define CMD_CANCEL 0x30           // 取消指令
 #define CMD_READ_INDEX_TABLE 0x1F // 读索引表指令
 #define CMD_SLEEP 0x33            // 休眠指令
@@ -61,14 +62,14 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
     if (recvData == nullptr || dataLen < 12) // 最小应答帧长度为12字节
     {
         printf("校验失败：数据为空或长度不足, 最小长度为12字节，当前长度=%d\n", dataLen);
-        return false;
+        return ESP_FAIL;
     }
 
     // 验证帧头
     if (recvData[0] != FRAME_HEADER[0] || recvData[1] != FRAME_HEADER[1])
     {
         printf("校验失败：帧头不正确, 应为%02X%02X，实际为%02X%02X\n", FRAME_HEADER[0], FRAME_HEADER[1], recvData[0], recvData[1]);
-        return false;
+        return ESP_FAIL;
     }
     // 验证设备地址
     for (int i = 2; i < 6; i++)
@@ -78,21 +79,21 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
             printf("校验失败：设备地址不匹配, 应为%02X%02X%02X%02X，实际为%02X%02X%02X%02X\n",
                 g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3],
                 recvData[2], recvData[3], recvData[4], recvData[5]);
-            return false;
+            return ESP_FAIL;
         }
     }
     // 验证应答包
     if (recvData[6] != PACKET_RESPONSE)
     {
         printf("校验失败：包标识不正确，应为%02X，实际为%02X\n", PACKET_RESPONSE, recvData[6]);
-        return false;
+        return ESP_FAIL;
     }
     // 验证长度
     uint16_t expectedDataLen = (recvData[7] << 8) | recvData[8]; // 数据长度（高字节在前）
     if (expectedDataLen + 9 != dataLen)                          // 包头(2) + 设备地址(4) + 包标识(1) + 数据长度(2) + 校验和(2)
     {
         printf("校验失败：数据长度不匹配（期望=%d，实际=%d）\n", expectedDataLen + 9, dataLen);
-        return false;
+        return ESP_FAIL;
     }
 
     // 提取校验和（最后2字节，高字节在前）
@@ -110,12 +111,12 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
     if (calculatedSum == receivedChecksum)
     {
         printf("校验成功：校验和匹配\n");
-        return true;
+        return ESP_OK;
     }
     else
     {
         printf("校验失败：校验和不匹配\n");
-        return false;
+        return ESP_FAIL;
     }
 }
 /**
@@ -165,12 +166,12 @@ esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
     if (ID >= 100)
     {
         printf("错误: 指纹ID号必须在0-99之间\n");
-        return false;
+        return ESP_FAIL;
     }
     if (enrollTimes > 5)
     {
         printf("错误: 录入次数必须在0-5之间\n");
-        return false;
+        return ESP_FAIL;
     }
 
     // 组装参数（param，bit0-bit5）
@@ -211,7 +212,7 @@ esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
     // 实际应用中添加帧发送逻辑（如UART发送）
     // return UART_Send(frame, frame_len);
 
-    return true;
+    return ESP_OK;
 }
 /**
  * @brief 指纹模块自动识别函数
@@ -261,7 +262,7 @@ esp_err_t auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool p
     // 实际应用中添加帧发送逻辑
     // return UART_Send(frame, 15);
 
-    return true;
+    return ESP_OK;
 }
 /**
  * @brief 指纹模块LED控制函数
@@ -278,7 +279,7 @@ esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
     if (functionCode < BLN_BREATH || functionCode > BLN_FADE_OUT)
     {
         printf("错误: 功能码必须在1-6之间（参考BLN_xxx宏定义）\n");
-        return false;
+        return ESP_FAIL;
     }
 
     // 过滤颜色参数的无效位（仅保留低3位）
@@ -322,7 +323,7 @@ esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
     // 实际应用中添加帧发送逻辑（如UART发送）
     // return UART_Send(frame, frame_len);
 
-    return true;
+    return ESP_OK;
 }
 /**
  * @brief 删除一定数量的指纹
@@ -336,12 +337,12 @@ esp_err_t delet_char(uint16_t ID, uint16_t count)
     if (ID >= 100)
     {
         printf("错误: 指纹ID号必须在0-99之间\n");
-        return false;
+        return ESP_FAIL;
     }
     if (count == 0 || count > 5)
     {
         printf("错误: 删除数量必须在1-100之间\n");
-        return false;
+        return ESP_FAIL;
     }
 
     uint8_t frame[16] = {
@@ -371,7 +372,7 @@ esp_err_t delet_char(uint16_t ID, uint16_t count)
     // 实际应用中添加帧发送逻辑（如UART发送）
     // return UART_Send(frame, frame_len);
 
-    return true;
+    return ESP_OK;
 }
 
 /**
@@ -403,7 +404,7 @@ esp_err_t empty()
     }
     printf("\n");
 
-    return true;
+    return ESP_OK;
 }
 
 /**
@@ -435,7 +436,7 @@ esp_err_t cancel()
     }
     printf("\n");
 
-    return true;
+    return ESP_OK;
 }
 /**
  * @brief 休眠指令
@@ -466,7 +467,7 @@ esp_err_t sleep()
     }
     printf("\n");
 
-    return true;
+    return ESP_OK;
 }
 /**
  * @brief 读索引表
@@ -498,7 +499,7 @@ esp_err_t read_index_table(uint8_t page)
     }
     printf("\n");
 
-    return true;
+    return ESP_OK;
 }
 
 /**
@@ -511,7 +512,7 @@ esp_err_t fingerprint_parse_frame(const uint8_t* recvData, uint16_t dataLen)
 {
     if (!verify_received_data(recvData, dataLen))
     {
-        return false; // 保持你的返回值风格
+        return ESP_FAIL;
     }
 
     memset(g_fingerIDArray, 0xFF, sizeof(g_fingerIDArray));
@@ -556,11 +557,11 @@ end_parse:
         printf("未检测到任何指纹\n");
     }
 
-    return true;
+    return ESP_OK;
 }
 int main()
 {
-#if 0
+#if 1
     auto_enroll(10, 5, false, false, false, true, false, false);
     control_led(BLN_FLASH, LED_ALL, LED_ALL, 3);
     auto_identify(0xFFFF, 0x12, false, false, false);

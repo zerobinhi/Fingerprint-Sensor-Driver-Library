@@ -2,7 +2,8 @@
 #include <string.h>
 #include <cstdint> // 推荐使用C99标准整数类型，增强跨平台兼容性
 #define esp_err_t bool
-
+#define ESP_OK true
+#define ESP_FAIL false
 // ========================== 通用宏定义 ==========================
 // 功能码宏定义（LED控制）
 #define BLN_BREATH 1   // 普通呼吸灯
@@ -12,6 +13,10 @@
 #define BLN_FADE_IN 5  // 渐开灯
 #define BLN_FADE_OUT 6 // 渐闭灯
 #define BLN_COLORFUL 7 // 七彩灯
+// 颜色配置宏（将有效位和颜色组合打包）
+#define ENABLE  1   // 启用该颜色配置
+#define DISABLE 0   // 禁用该颜色配置
+#define COLOR_CONFIG(enable, color)  ((enable ? 1 : 0) << 3 | (color & 0x07))
 
 // LED颜色宏定义
 #define LED_OFF 0x00   // 全灭
@@ -35,7 +40,6 @@
 #define CMD_AUTO_IDENTIFY 0x32    // 自动识别指令
 #define CMD_DELET_CHAR 0x0C       // 删除指纹指令
 #define CMD_EMPTY 0x0D            // 清空指纹指令
-#define CMD_HAND_SHAKE 0x35       // 握手指令（可选）
 #define CMD_CANCEL 0x30           // 取消指令
 #define CMD_READ_INDEX_TABLE 0x1F // 读索引表指令
 #define CMD_SLEEP 0x33            // 休眠指令
@@ -54,7 +58,7 @@ uint8_t g_fingerNumber = 0;                            // 有效指纹数量
  * @brief 校验指纹模块接收数据的有效性（重点验证校验和）
  * @param recvData 接收的数据包缓冲区
  * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
- * @return 校验结果：true=有效数据，false=无效数据
+ * @return 校验结果：true=有效数据，ESP_FAIL=无效数据
  */
 esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 {
@@ -62,14 +66,14 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 	if (recvData == nullptr || dataLen < 12) // 最小应答帧长度为12字节
 	{
 		printf("校验失败：数据为空或长度不足, 最小长度为12字节，当前长度=%d\n", dataLen);
-		return false;
+		return ESP_FAIL;
 	}
 
 	// 验证帧头
 	if (recvData[0] != FRAME_HEADER[0] || recvData[1] != FRAME_HEADER[1])
 	{
 		printf("校验失败：帧头不正确, 应为%02X%02X，实际为%02X%02X\n", FRAME_HEADER[0], FRAME_HEADER[1], recvData[0], recvData[1]);
-		return false;
+		return ESP_FAIL;
 	}
 	// 验证设备地址
 	for (int i = 2; i < 6; i++)
@@ -79,21 +83,21 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 			printf("校验失败：设备地址不匹配, 应为%02X%02X%02X%02X，实际为%02X%02X%02X%02X\n",
 				g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3],
 				recvData[2], recvData[3], recvData[4], recvData[5]);
-			return false;
+			return ESP_FAIL;
 		}
 	}
 	// 验证应答包
 	if (recvData[6] != PACKET_RESPONSE)
 	{
 		printf("校验失败：包标识不正确，应为%02X，实际为%02X\n", PACKET_RESPONSE, recvData[6]);
-		return false;
+		return ESP_FAIL;
 	}
 	// 验证长度
 	uint16_t expectedDataLen = (recvData[7] << 8) | recvData[8]; // 数据长度（高字节在前）
 	if (expectedDataLen + 9 != dataLen)                          // 包头(2) + 设备地址(4) + 包标识(1) + 数据长度(2) + 校验和(2)
 	{
 		printf("校验失败：数据长度不匹配（期望=%d，实际=%d）\n", expectedDataLen + 9, dataLen);
-		return false;
+		return ESP_FAIL;
 	}
 
 	// 提取校验和（最后2字节，高字节在前）
@@ -116,7 +120,7 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 	else
 	{
 		printf("校验失败：校验和不匹配\n");
-		return false;
+		return ESP_FAIL;
 	}
 }
 /**
@@ -166,12 +170,12 @@ esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
 	if (ID >= 100)
 	{
 		printf("错误: 指纹ID号必须在0-99之间\n");
-		return false;
+		return ESP_FAIL;
 	}
 	if (enrollTimes > 5)
 	{
 		printf("错误: 录入次数必须在0-5之间\n");
-		return false;
+		return ESP_FAIL;
 	}
 
 	// 组装参数（param，bit0-bit5）
@@ -276,60 +280,146 @@ esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
 	uint8_t endColor, uint8_t cycleTimes)
 {
 	// 参数合法性检查
-	if (functionCode < BLN_BREATH || functionCode > BLN_COLORFUL)
+	if (functionCode < BLN_BREATH || functionCode > BLN_FADE_OUT)
 	{
-		printf("错误: 功能码必须在1-7之间（参考BLN_xxx宏定义）\n");
-		return false;
+		printf("错误: 功能码必须在1-6之间（参考BLN_xxx宏定义）\n");
+		return ESP_FAIL;
 	}
-	if (functionCode != BLN_COLORFUL)
+
+	// 过滤颜色参数的无效位（仅保留低3位）
+	if ((startColor & 0xF8) != 0)
 	{
-		// 过滤颜色参数的无效位（仅保留低3位）
-		if ((startColor & 0xF8) != 0)
-		{
-			printf("警告: 起始颜色仅低3位有效，已自动过滤\n");
-			startColor &= 0x07;
-		}
-		if ((endColor & 0xF8) != 0)
-		{
-			printf("警告: 结束颜色仅低3位有效，已自动过滤\n");
-			endColor &= 0x07;
-		}
-
-		uint8_t frame[16] = {
-			FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-			g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-			PACKET_CMD,                                                                     // 包标识(1字节)
-			0x00, 0x07,                                                                     // 数据长度(2字节)
-			CMD_CONTROL_BLN,                                                                // 指令(1字节)
-			functionCode,                                                                   // 功能码FC(1字节)
-			startColor,                                                                     // 起始颜色ST(1字节)
-			endColor,                                                                       // 结束颜色ED(1字节)
-			cycleTimes,                                                                     // 循环次数TS(1字节)
-			0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
-		};
-
-		// 计算并填充校验和（调用通用函数）
-		uint16_t checksum = calculate_checksum(frame, sizeof(frame));
-		frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
-		frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
-
-		// 调试输出（格式化显示）
-		printf("发送LED控制帧: ");
-		for (uint8_t i = 0; i < sizeof(frame); i++)
-		{
-			printf("%02X ", frame[i]);
-		}
-		printf("\n");
+		printf("警告: 起始颜色仅低3位有效，已自动过滤\n");
+		startColor &= 0x07;
 	}
-	else
+	if ((endColor & 0xF8) != 0)
 	{
-
+		printf("警告: 结束颜色仅低3位有效，已自动过滤\n");
+		endColor &= 0x07;
 	}
+
+	uint8_t frame[16] = {
+		FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
+		g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
+		PACKET_CMD,                                                                     // 包标识(1字节)
+		0x00, 0x07,                                                                     // 数据长度(2字节)
+		CMD_CONTROL_BLN,                                                                // 指令(1字节)
+		functionCode,                                                                   // 功能码FC(1字节)
+		startColor,                                                                     // 起始颜色ST(1字节)
+		endColor,                                                                       // 结束颜色ED(1字节)
+		cycleTimes,                                                                     // 循环次数TS(1字节)
+		0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+	};
+
+	// 计算并填充校验和（调用通用函数）
+	uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+	frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
+	frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+	// 调试输出（格式化显示）
+	printf("发送LED控制帧: ");
+	for (uint8_t i = 0; i < sizeof(frame); i++)
+	{
+		printf("%02X ", frame[i]);
+	}
+	printf("\n");
+
 	// 实际应用中添加帧发送逻辑（如UART发送）
 	// return UART_Send(frame, frame_len);
 
 	return true;
 }
+
+/**
+ * @brief 指纹模块LED七彩呼吸灯控制函数
+ * @param timeBit 呼吸周期时间参数（取值1-100，分别对应0.1秒-10秒）
+ * @param high1 第1组高4位配置
+ * @param low1 第1组低4位配置
+ * @param high2 第2组高4位配置
+ * @param low2 第2组低4位配置
+ * @param high3 第3组高4位配置
+ * @param low3 第3组低4位配置
+ * @param high4 第4组高4位配置
+ * @param low4 第4组低4位配置
+ * @param high5 第5组高4位配置
+ * @param low5 第5组低4位配置
+ * @param cycleTimes 循环次数（0表示无限循环，1-100表示有限次数循环）
+ *
+ * 使用示例：先蓝灯亮5秒，再绿灯亮5秒，循环5次
+ * control_colorful_led(50,                // 5秒/次
+ *                     COLOR_CONFIG(1, LED_BLUE),  COLOR_CONFIG(0, LED_OFF),  // 第1组：高4位蓝灯有效
+ *                     COLOR_CONFIG(1, LED_GREEN), COLOR_CONFIG(0, LED_OFF),  // 第2组：高4位绿灯有效
+ *                     COLOR_CONFIG(0, LED_OFF),   COLOR_CONFIG(0, LED_OFF),  // 第3组：无效
+ *                     COLOR_CONFIG(0, LED_OFF),   COLOR_CONFIG(0, LED_OFF),  // 第4组：无效
+ *                     COLOR_CONFIG(0, LED_OFF),   COLOR_CONFIG(0, LED_OFF),  // 第5组：无效
+ *                     5);                     // 循环5次
+ *
+ * @return 操作结果（ESP_OK表示成功，其他值表示失败）
+ */
+esp_err_t control_colorful_led(uint8_t timeBit,
+	uint8_t high1, uint8_t low1,
+	uint8_t high2, uint8_t low2,
+	uint8_t high3, uint8_t low3,
+	uint8_t high4, uint8_t low4,
+	uint8_t high5, uint8_t low5,
+	uint8_t cycleTimes)
+{
+	// 参数合法性检查
+	if (timeBit < 1 || timeBit > 100)
+	{
+		printf("错误: 时间参数必须在1-100之间\n");
+		return ESP_FAIL;
+	}
+
+	// 循环次数检查（0表示无限循环，1-100表示有限循环）
+	if (cycleTimes > 100)
+	{
+		printf("错误: 循环次数必须为0或1-100之间\n");
+		return ESP_FAIL;
+	}
+
+	// 组合颜色控制码（高低4位合并为1字节）
+	uint8_t colorCode1 = (high1 << 4) | (low1 & 0x0F);
+	uint8_t colorCode2 = (high2 << 4) | (low2 & 0x0F);
+	uint8_t colorCode3 = (high3 << 4) | (low3 & 0x0F);
+	uint8_t colorCode4 = (high4 << 4) | (low4 & 0x0F);
+	uint8_t colorCode5 = (high5 << 4) | (low5 & 0x0F);
+
+	// 帧数据组装
+	uint8_t frame[20] = {
+		FRAME_HEADER[0], FRAME_HEADER[1],               // 包头(2字节)
+		g_deviceAddress[0], g_deviceAddress[1],         // 设备地址(4字节)
+		g_deviceAddress[2], g_deviceAddress[3],
+		PACKET_CMD,                                     // 包标识(1字节)
+		0x00, 0x0B,                                     // 数据长度(2字节)
+		CMD_CONTROL_BLN,                                // 指令(1字节)
+		0x07,                                           // 功能码FC(1字节)
+		timeBit,                                        // 时间位(1字节)
+		colorCode1, colorCode2, colorCode3,             // 颜色控制码(5字节)
+		colorCode4, colorCode5,
+		cycleTimes,                                      // 循环次数TS(1字节)
+		0x00, 0x00                                      // 校验和(2字节，待计算)
+	};
+
+	// 计算并填充校验和
+	uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+	frame[18] = (uint8_t)(checksum >> 8);    // 校验和高字节
+	frame[19] = (uint8_t)(checksum & 0xFF);  // 校验和低字节
+
+	// 调试输出帧信息
+	printf("发送七彩呼吸灯控制帧: ");
+	for (uint8_t i = 0; i < sizeof(frame); i++)
+	{
+		printf("%02X ", frame[i]);
+	}
+	printf("\n");
+
+	// 实际应用中添加帧发送逻辑（如UART发送）
+	// return uart_write_bytes(UART_NUM_0, (const char*)frame, sizeof(frame));
+
+	return ESP_OK;
+}
+
 /**
  * @brief 删除一定数量的指纹
  * @param ID：指纹号
@@ -342,12 +432,12 @@ esp_err_t delet_char(uint16_t ID, uint16_t count)
 	if (ID >= 100)
 	{
 		printf("错误: 指纹ID号必须在0-99之间\n");
-		return false;
+		return ESP_FAIL;
 	}
 	if (count == 0 || count > 5)
 	{
 		printf("错误: 删除数量必须在1-100之间\n");
-		return false;
+		return ESP_FAIL;
 	}
 
 	uint8_t frame[16] = {
@@ -517,7 +607,7 @@ esp_err_t fingerprint_parse_frame(const uint8_t* recvData, uint16_t dataLen)
 {
 	if (!verify_received_data(recvData, dataLen))
 	{
-		return false; // 保持你的返回值风格
+		return ESP_FAIL; // 保持你的返回值风格
 	}
 
 	memset(g_fingerIDArray, 0xFF, sizeof(g_fingerIDArray));
@@ -568,7 +658,7 @@ int main()
 {
 #if 1
 	auto_enroll(10, 5, false, false, false, true, false, false);
-	control_led(BLN_FLASH, LED_ALL, LED_ALL, 3);
+	control_led(BLN_FLASH, LED_RED, LED_RED, 3);
 	auto_identify(0xFFFF, 0x12, false, false, false);
 	empty();
 	cancel();
@@ -598,7 +688,7 @@ int main()
 	uint8_t validFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
 	verify_received_data(validFrame, sizeof(validFrame) / sizeof(validFrame[0])); // 应返回true
 	// 其他测试用例可以继续添加...
-#else
+
 	// 示例1：ID=0,1,2（第11字节为0x07，二进制00000111）
 	uint8_t frame1[] = {
 		0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00,
@@ -632,6 +722,28 @@ int main()
 	fingerprint_parse_frame(frame1, frame1_len);
 	fingerprint_parse_frame(frame2, frame2_len);
 	fingerprint_parse_frame(frame3, frame3_len);
+
+	// 调用示例：先蓝灯呼吸2秒，再绿灯呼吸2秒，循环3次
+	control_colorful_led(
+		20,  // 时间参数：20 × 0.1秒 = 2秒/次
+
+		// 第1组颜色配置
+		COLOR_CONFIG(ENABLE, LED_BLUE),   // 高4位：启用，蓝色
+		COLOR_CONFIG(DISABLE, LED_OFF),   // 低4位：禁用
+
+		// 第2组颜色配置
+		COLOR_CONFIG(ENABLE, LED_GREEN),  // 高4位：启用，绿色
+		COLOR_CONFIG(ENABLE, LED_RED),   // 低4位：启用，红色
+
+
+		// 第3-5组颜色配置（全部禁用）
+		COLOR_CONFIG(DISABLE, LED_OFF), COLOR_CONFIG(DISABLE, LED_OFF),
+		COLOR_CONFIG(DISABLE, LED_OFF), COLOR_CONFIG(DISABLE, LED_OFF),
+		COLOR_CONFIG(DISABLE, LED_OFF), COLOR_CONFIG(DISABLE, LED_OFF),
+
+		3   // 循环3次
+	);
+#else
 
 #endif
 	return 0;
