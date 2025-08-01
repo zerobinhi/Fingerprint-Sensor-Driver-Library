@@ -659,7 +659,7 @@ int main()
 #if 1
 	auto_enroll(10, 5, false, false, false, true, false, false);
 	control_led(BLN_FLASH, LED_RED, LED_RED, 3);
-	auto_identify(0xFFFF, 0x12, false, false, false);
+	auto_identify(0x0011, 0x12, false, false, false);
 	empty();
 	cancel();
 	delet_char(11, 3);
