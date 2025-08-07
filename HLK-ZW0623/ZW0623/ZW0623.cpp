@@ -300,7 +300,7 @@ esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
         PACKET_CMD,                                                                     // 包标识(1字节)
         0x00, 0x07,                                                                     // 数据长度(2字节)
         CMD_CONTROL_BLN,                                                                // 指令(1字节)
-        functionCode,                                                                   // 功能码FC(1字节)
+        functionCode,                                                                   // 功能码(1字节)
         startColor,                                                                     // 起始颜色ST(1字节)
         endColor,                                                                       // 结束颜色ED(1字节)
         cycleTimes,                                                                     // 循环次数TS(1字节)

@@ -13,10 +13,6 @@
 #define BLN_FADE_IN 5  // 渐开灯
 #define BLN_FADE_OUT 6 // 渐闭灯
 #define BLN_COLORFUL 7 // 七彩灯
-// 颜色配置宏（将有效位和颜色组合打包）
-#define ENABLE  1   // 启用该颜色配置
-#define DISABLE 0   // 禁用该颜色配置
-#define COLOR_CONFIG(enable, color)  ((enable ? 1 : 0) << 3 | (color & 0x07))
 
 // LED颜色宏定义
 #define LED_OFF 0x00   // 全灭
@@ -304,7 +300,7 @@ esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
 		PACKET_CMD,                                                                     // 包标识(1字节)
 		0x00, 0x07,                                                                     // 数据长度(2字节)
 		CMD_CONTROL_BLN,                                                                // 指令(1字节)
-		functionCode,                                                                   // 功能码FC(1字节)
+		functionCode,                                                                   // 功能码(1字节)
 		startColor,                                                                     // 起始颜色ST(1字节)
 		endColor,                                                                       // 结束颜色ED(1字节)
 		cycleTimes,                                                                     // 循环次数TS(1字节)
@@ -331,37 +327,13 @@ esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
 }
 
 /**
- * @brief 指纹模块LED七彩呼吸灯控制函数
+ * @brief 指纹模块LED跑马灯控制函数
+ * @param startColor 起始颜色配置
  * @param timeBit 呼吸周期时间参数（取值1-100，分别对应0.1秒-10秒）
- * @param high1 第1组高4位配置
- * @param low1 第1组低4位配置
- * @param high2 第2组高4位配置
- * @param low2 第2组低4位配置
- * @param high3 第3组高4位配置
- * @param low3 第3组低4位配置
- * @param high4 第4组高4位配置
- * @param low4 第4组低4位配置
- * @param high5 第5组高4位配置
- * @param low5 第5组低4位配置
- * @param cycleTimes 循环次数（0表示无限循环，1-100表示有限次数循环）
- *
- * 使用示例：先蓝灯亮5秒，再绿灯亮5秒，循环5次
- * control_colorful_led(50,                // 5秒/次
- *                     COLOR_CONFIG(1, LED_BLUE),  COLOR_CONFIG(0, LED_OFF),  // 第1组：高4位蓝灯有效
- *                     COLOR_CONFIG(1, LED_GREEN), COLOR_CONFIG(0, LED_OFF),  // 第2组：高4位绿灯有效
- *                     COLOR_CONFIG(0, LED_OFF),   COLOR_CONFIG(0, LED_OFF),  // 第3组：无效
- *                     COLOR_CONFIG(0, LED_OFF),   COLOR_CONFIG(0, LED_OFF),  // 第4组：无效
- *                     COLOR_CONFIG(0, LED_OFF),   COLOR_CONFIG(0, LED_OFF),  // 第5组：无效
- *                     5);                     // 循环5次
- *
+ * @param cycleTimes 循环次数
  * @return 操作结果（ESP_OK表示成功，其他值表示失败）
  */
-esp_err_t control_colorful_led(uint8_t timeBit,
-	uint8_t high1, uint8_t low1,
-	uint8_t high2, uint8_t low2,
-	uint8_t high3, uint8_t low3,
-	uint8_t high4, uint8_t low4,
-	uint8_t high5, uint8_t low5,
+esp_err_t control_colorful_led(uint8_t startColor, uint8_t timeBit,
 	uint8_t cycleTimes)
 {
 	// 参数合法性检查
@@ -370,44 +342,35 @@ esp_err_t control_colorful_led(uint8_t timeBit,
 		printf("错误: 时间参数必须在1-100之间\n");
 		return ESP_FAIL;
 	}
-
-	// 循环次数检查（0表示无限循环，1-100表示有限循环）
-	if (cycleTimes > 100)
+	// 过滤颜色参数的无效位（仅保留低3位）
+	if ((startColor & 0xF8) != 0)
 	{
-		printf("错误: 循环次数必须为0或1-100之间\n");
-		return ESP_FAIL;
+		printf("警告: 起始颜色仅低3位有效，已自动过滤\n");
+		startColor &= 0x07;
 	}
-
-	// 组合颜色控制码（高低4位合并为1字节）
-	uint8_t colorCode1 = (high1 << 4) | (low1 & 0x0F);
-	uint8_t colorCode2 = (high2 << 4) | (low2 & 0x0F);
-	uint8_t colorCode3 = (high3 << 4) | (low3 & 0x0F);
-	uint8_t colorCode4 = (high4 << 4) | (low4 & 0x0F);
-	uint8_t colorCode5 = (high5 << 4) | (low5 & 0x0F);
-
 	// 帧数据组装
-	uint8_t frame[20] = {
+	uint8_t frame[17] = {
 		FRAME_HEADER[0], FRAME_HEADER[1],               // 包头(2字节)
 		g_deviceAddress[0], g_deviceAddress[1],         // 设备地址(4字节)
 		g_deviceAddress[2], g_deviceAddress[3],
 		PACKET_CMD,                                     // 包标识(1字节)
-		0x00, 0x0B,                                     // 数据长度(2字节)
+		0x00, 0x08,                                     // 数据长度(2字节)
 		CMD_CONTROL_BLN,                                // 指令(1字节)
-		0x07,                                           // 功能码FC(1字节)
+		BLN_COLORFUL,                                           // 功能码(1字节)
+		startColor,                                     // 起始颜色(1字节)
+		0x11,                                           // 占空比
+		cycleTimes,                                      // 循环次数(1字节)
 		timeBit,                                        // 时间位(1字节)
-		colorCode1, colorCode2, colorCode3,             // 颜色控制码(5字节)
-		colorCode4, colorCode5,
-		cycleTimes,                                      // 循环次数TS(1字节)
 		0x00, 0x00                                      // 校验和(2字节，待计算)
 	};
 
 	// 计算并填充校验和
 	uint16_t checksum = calculate_checksum(frame, sizeof(frame));
-	frame[18] = (uint8_t)(checksum >> 8);    // 校验和高字节
-	frame[19] = (uint8_t)(checksum & 0xFF);  // 校验和低字节
+	frame[15] = (uint8_t)(checksum >> 8);    // 校验和高字节
+	frame[16] = (uint8_t)(checksum & 0xFF);  // 校验和低字节
 
 	// 调试输出帧信息
-	printf("发送七彩呼吸灯控制帧: ");
+	printf("发送跑马灯控制帧: ");
 	for (uint8_t i = 0; i < sizeof(frame); i++)
 	{
 		printf("%02X ", frame[i]);
@@ -434,7 +397,7 @@ esp_err_t delet_char(uint16_t ID, uint16_t count)
 		printf("错误: 指纹ID号必须在0-99之间\n");
 		return ESP_FAIL;
 	}
-	if (count == 0 || count > 5)
+	if (count == 0 || count > 100)
 	{
 		printf("错误: 删除数量必须在1-100之间\n");
 		return ESP_FAIL;
@@ -723,26 +686,7 @@ int main()
 	fingerprint_parse_frame(frame2, frame2_len);
 	fingerprint_parse_frame(frame3, frame3_len);
 
-	// 调用示例：先蓝灯呼吸2秒，再绿灯呼吸2秒，循环3次
-	control_colorful_led(
-		20,  // 时间参数：20 × 0.1秒 = 2秒/次
-
-		// 第1组颜色配置
-		COLOR_CONFIG(ENABLE, LED_BLUE),   // 高4位：启用，蓝色
-		COLOR_CONFIG(DISABLE, LED_OFF),   // 低4位：禁用
-
-		// 第2组颜色配置
-		COLOR_CONFIG(ENABLE, LED_GREEN),  // 高4位：启用，绿色
-		COLOR_CONFIG(ENABLE, LED_RED),   // 低4位：启用，红色
-
-
-		// 第3-5组颜色配置（全部禁用）
-		COLOR_CONFIG(DISABLE, LED_OFF), COLOR_CONFIG(DISABLE, LED_OFF),
-		COLOR_CONFIG(DISABLE, LED_OFF), COLOR_CONFIG(DISABLE, LED_OFF),
-		COLOR_CONFIG(DISABLE, LED_OFF), COLOR_CONFIG(DISABLE, LED_OFF),
-
-		3   // 循环3次
-	);
+	control_colorful_led(LED_ALL, 10, 0); // 测试跑马灯控制
 #else
 
 #endif
