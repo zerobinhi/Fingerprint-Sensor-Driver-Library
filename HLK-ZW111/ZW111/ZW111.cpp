@@ -50,6 +50,32 @@ uint8_t g_fingerIDArray[100] = { 0xFF };                 // 指纹模块最大�
 uint8_t g_fingerNumber = 0;                            // 有效指纹数量
 
 // ========================== 通用工具函数 ==========================
+
+/**
+ * @brief 计算数据帧的校验和（累加和）
+ * @param recvData 数据帧缓冲区
+ * @param dataLen 数据帧总长度
+ * @return 计算得到的16位校验和（高字节在前）
+ * @note 校验和范围：从第6字节（CHECKSUM_START_INDEX）到校验和前1字节
+ */
+uint16_t calculate_checksum(const uint8_t* recvData, uint16_t dataLen)
+{
+	if (recvData == nullptr || dataLen <= CHECKSUM_START_INDEX + CHECKSUM_LEN)
+	{
+		return 0; // 无效参数，返回0（实际应用可添加错误日志）
+	}
+	uint16_t checksum = 0;
+	uint8_t checksum_end_index = dataLen - CHECKSUM_LEN - 1; // 校验和前1字节索引
+
+	// 累加指定范围内的所有字节
+	for (uint8_t i = CHECKSUM_START_INDEX; i <= checksum_end_index; i++)
+	{
+		checksum += recvData[i];
+	}
+
+	return checksum;
+}
+
 /**
  * @brief 校验指纹模块接收数据的有效性（重点验证校验和）
  * @param recvData 接收的数据包缓冲区
@@ -90,58 +116,23 @@ esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
 	}
 	// 验证长度
 	uint16_t expectedDataLen = (recvData[7] << 8) | recvData[8]; // 数据长度（高字节在前）
-	if (expectedDataLen + 9 != dataLen)                          // 包头(2) + 设备地址(4) + 包标识(1) + 数据长度(2) + 校验和(2)
+	if (expectedDataLen + 9 != dataLen)
 	{
 		printf("校验失败：数据长度不匹配（期望=%d，实际=%d）\n", expectedDataLen + 9, dataLen);
 		return ESP_FAIL;
 	}
-
 	// 提取校验和（最后2字节，高字节在前）
 	uint16_t receivedChecksum = (recvData[dataLen - 2] << 8) | recvData[dataLen - 1];
 
-	// 计算校验范围数据的累加和（包标识+数据长度+指令结果）
-	// 校验范围：从索引6（包标识）到索引dataLen-3（校验和前1字节）
-	uint16_t calculatedSum = 0;
-	for (uint16_t i = 6; i <= dataLen - 3; i++)
-	{
-		calculatedSum += recvData[i];
-	}
-
 	// 对比校验结果
-	if (calculatedSum == receivedChecksum)
+	if (calculate_checksum(recvData, dataLen) != receivedChecksum)
 	{
-		printf("校验成功：校验和匹配\n");
-		return true;
-	}
-	else
-	{
+
 		printf("校验失败：校验和不匹配\n");
 		return ESP_FAIL;
 	}
-}
-/**
- * @brief 计算数据帧的校验和（累加和）
- * @param recvData 数据帧缓冲区
- * @param dataLen 数据帧总长度
- * @return 计算得到的16位校验和（高字节在前）
- * @note 校验和范围：从第6字节（CHECKSUM_START_INDEX）到校验和前1字节
- */
-uint16_t calculate_checksum(const uint8_t* recvData, uint16_t dataLen)
-{
-	if (recvData == nullptr || dataLen <= CHECKSUM_START_INDEX + CHECKSUM_LEN)
-	{
-		return 0; // 无效参数，返回0（实际应用可添加错误日志）
-	}
-	uint16_t checksum = 0;
-	uint8_t checksum_end_index = dataLen - CHECKSUM_LEN - 1; // 校验和前1字节索引
-
-	// 累加指定范围内的所有字节
-	for (uint8_t i = CHECKSUM_START_INDEX; i <= checksum_end_index; i++)
-	{
-		checksum += recvData[i];
-	}
-
-	return checksum;
+	printf("校验成功：校验和匹配\n");
+	return ESP_OK;
 }
 
 // ========================== 功能函数 ==========================
