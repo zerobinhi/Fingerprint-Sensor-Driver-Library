@@ -625,7 +625,7 @@ int main()
     auto_identify(0xFFFF, 0x02, false, true, true);
     empty();
     cancel();
-    delete_char(11, 3);
+    delete_char(10, 1);
     sleep();
     read_index_table(0);
 
