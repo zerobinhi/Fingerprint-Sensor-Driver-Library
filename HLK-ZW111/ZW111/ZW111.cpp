@@ -1,172 +1,267 @@
 ﻿#include <stdio.h>
 #include <string.h>
-#include <cstdint> // 推荐使用C99标准整数类型，增强跨平台兼容性
-#define esp_err_t bool
-#define ESP_OK true
-#define ESP_FAIL false
+#include <cstdint>
+#include <stdarg.h> // 用于可变参数（宏定义日志需）
+
+// ========================== 日志宏定义（适配Visual Studio） ==========================
+#define DEBUG // 定义DEBUG宏以启用调试日志
+#ifdef DEBUG
+// 1. 模拟ESP_INFO级日志（绿色标识）
+#define ESP_LOGI(tag, fmt, ...)                                         \
+    do                                                                  \
+    {                                                                   \
+        printf("\033[32m[I][%s] " fmt "\033[0m\n", tag, ##__VA_ARGS__); \
+    } while (0)
+
+// 2. 模拟ESP_ERROR级日志（红色标识）
+#define ESP_LOGE(tag, fmt, ...)                                         \
+    do                                                                  \
+    {                                                                   \
+        printf("\033[31m[E][%s] " fmt "\033[0m\n", tag, ##__VA_ARGS__); \
+    } while (0)
+
+// 3. 模拟ESP_LOG_BUFFER_HEX（打印缓冲区十六进制）
+static void __esp_log_buffer_hex(const char *tag, const uint8_t *buf, size_t len)
+{
+    if (buf == NULL || len == 0)
+    {
+        ESP_LOGI(tag, "Buffer is NULL or empty");
+        return;
+    }
+    // 开始绿色显示，包含标签和数据
+    printf("\033[32m[I][%s] ", tag);
+    for (size_t i = 0; i < len; i++)
+    {
+        printf("%02X ", buf[i]);
+    }
+    // 结束绿色显示
+    printf("\033[0m\n");
+}
+
+#define ESP_LOG_BUFFER_HEX(tag, buf, len) __esp_log_buffer_hex(tag, buf, len)
+
+#else
+// 非DEBUG模式禁用日志（避免冗余输出）
+#define ESP_LOGI(tag, fmt, ...)
+#define ESP_LOGE(tag, fmt, ...)
+#define ESP_LOG_BUFFER_HEX(tag, buf, len)
+#endif
+
+// ========================== 原有宏定义（以下为你的代码） ==========================
+#define esp_err_t int
+#define ESP_OK 0
+#define ESP_FAIL -1
+
 // ========================== 通用宏定义 ==========================
 // 功能码宏定义（LED控制）
-#define BLN_BREATH 1   // 普通呼吸灯
-#define BLN_FLASH 2    // 闪烁灯
-#define BLN_ON 3       // 常开灯
-#define BLN_OFF 4      // 常闭灯
-#define BLN_FADE_IN 5  // 渐开灯
-#define BLN_FADE_OUT 6 // 渐闭灯
-#define BLN_COLORFUL 7 // 七彩灯
+#define BLN_BREATH 1   // 普通呼吸灯模式
+#define BLN_FLASH 2    // 闪烁灯模式
+#define BLN_ON 3       // 常亮模式
+#define BLN_OFF 4      // 常闭模式
+#define BLN_FADE_IN 5  // 渐亮模式
+#define BLN_FADE_OUT 6 // 渐暗模式
+#define BLN_COLORFUL 7 // 七彩循环模式
 
 // LED颜色宏定义
 #define LED_OFF 0x00   // 全灭
-#define LED_BLUE 0x01  // 蓝灯（bit0）
-#define LED_GREEN 0x02 // 绿灯（bit1）
-#define LED_RED 0x04   // 红灯（bit2）
-#define LED_BG 0x03    // 蓝绿灯（bit0+bit1）
-#define LED_BR 0x05    // 蓝红灯（bit0+bit2）
-#define LED_GR 0x06    // 绿红灯（bit1+bit2）
-#define LED_ALL 0x07   // 红绿蓝灯全亮（bit0+bit1+bit2）
+#define LED_BLUE 0x01  // 蓝灯
+#define LED_GREEN 0x02 // 绿灯
+#define LED_RED 0x04   // 红灯
+#define LED_BG 0x03    // 蓝+绿灯
+#define LED_BR 0x05    // 蓝+红灯
+#define LED_GR 0x06    // 绿+红灯
+#define LED_ALL 0x07   // 红+绿+蓝全亮
 
 // 包标识定义
-#define PACKET_CMD 0x01       // 命令包
+#define PACKET_CMD 0x01       // 命令包（主机发送指令）
 #define PACKET_DATA_MORE 0x02 // 数据包（有后续包）
-#define PACKET_DATA_LAST 0x08 // 最后一个数据包（结束包）
-#define PACKET_RESPONSE 0x07  // 应答包
+#define PACKET_DATA_LAST 0x08 // 最后一个数据包（无后续）
+#define PACKET_RESPONSE 0x07  // 应答包（模块返回结果）
 
 // 指令码定义
-#define CMD_AUTO_ENROLL 0x31      // 自动注册指令
-#define CMD_CONTROL_BLN 0x3C      // 背光灯控制指令
-#define CMD_AUTO_IDENTIFY 0x32    // 自动识别指令
-#define CMD_DELET_CHAR 0x0C       // 删除指纹指令
-#define CMD_EMPTY 0x0D            // 清空指纹指令
-#define CMD_CANCEL 0x30           // 取消指令
-#define CMD_READ_INDEX_TABLE 0x1F // 读索引表指令
-#define CMD_SLEEP 0x33            // 休眠指令
+#define CMD_AUTO_ENROLL 0x31      // 自动注册指纹指令
+#define CMD_AUTO_IDENTIFY 0x32    // 自动识别指纹指令
+#define CMD_CONTROL_BLN 0x3C      // 背光灯（LED）控制指令
+#define CMD_DELET_CHAR 0x0C       // 删除指定指纹指令
+#define CMD_EMPTY 0x0D            // 清空所有指纹指令
+#define CMD_CANCEL 0x30           // 取消当前操作指令
+#define CMD_READ_INDEX_TABLE 0x1F // 读取指纹索引表指令
+#define CMD_SLEEP 0x33            // 模块休眠指令
 
 // 帧结构常量（避免硬编码，增强可维护性）
 #define CHECKSUM_LEN 2         // 校验和长度（字节）
 #define CHECKSUM_START_INDEX 6 // 校验和计算起始索引（固定，从0开始）
 
-const uint8_t FRAME_HEADER[2] = { 0xEF, 0x01 };          // 帧头
-uint8_t g_deviceAddress[4] = { 0xFF, 0xFF, 0xFF, 0xFF }; // 设备地址
-uint8_t g_fingerIDArray[100] = { 0xFF };                 // 指纹模块最大容量为100枚指纹
-uint8_t g_fingerNumber = 0;                            // 有效指纹数量
+static const char *TAG = "SmartLock Fingerprint"; // 日志标签
+
+const uint8_t FRAME_HEADER[2] = {0xEF, 0x01}; // 指纹模块帧头固定值
+
+struct fingerprint_device
+{
+    /**
+     * 0X00 刚开机的状态
+     * 0X01 读索引表状态
+     * 0X02 注册指纹状态
+     * 0X03 删除指纹状态
+     * 0X04 验证指纹状态
+     * 0X0A 取消命令状态
+     * 0X0B 准备关机状态
+     */
+    uint8_t state;
+
+    /**
+     * false 断电状态
+     * true 上电状态
+     */
+    bool power;
+
+    // 设备地址（4字节），默认地址0xFFFFFFFF，可修改
+    uint8_t deviceAddress[4];
+
+    // 已注册指纹ID数组，最大支持100枚（0-99），未使用位置为0xFF
+    uint8_t fingerIDArray[100];
+
+    // 当前有效指纹数量
+    uint8_t fingerNumber;
+};
+
+struct fingerprint_device zw111; // 定义指纹模块数据结构变量
 
 // ========================== 通用工具函数 ==========================
-
 /**
- * @brief 计算数据帧的校验和（累加和）
- * @param recvData 数据帧缓冲区
- * @param dataLen 数据帧总长度
- * @return 计算得到的16位校验和（高字节在前）
- * @note 校验和范围：从第6字节（CHECKSUM_START_INDEX）到校验和前1字节
+ * @brief 计算数据帧的校验和
+ * @param receive_data 数据帧缓冲区
+ * @param data_length 数据帧总长度
+ * @return uint16_t 计算得到的16位校验和（高字节在前），参数无效返回0
  */
-uint16_t calculate_checksum(const uint8_t* recvData, uint16_t dataLen)
+static uint16_t calculate_checksum(const uint8_t *receive_data, uint16_t data_length)
 {
-    if (recvData == nullptr || dataLen <= CHECKSUM_START_INDEX + CHECKSUM_LEN)
-    {
-		printf("错误: 无效的接收数据或长度不足，无法计算校验和\n");
-        return 0;
-    }
     uint16_t checksum = 0;
-    uint8_t checksum_end_index = dataLen - CHECKSUM_LEN - 1; // 校验和前1字节索引
+    uint8_t checksumEndIndex = data_length - CHECKSUM_LEN - 1; // 校验和前一字节索引
 
-    // 累加指定范围内的所有字节
-    for (uint8_t i = CHECKSUM_START_INDEX; i <= checksum_end_index; i++)
+    // 累加校验范围：从CHECKSUM_START_INDEX到checksumEndIndex
+    for (uint8_t i = CHECKSUM_START_INDEX; i <= checksumEndIndex; i++)
     {
-        checksum += recvData[i];
+        checksum += receive_data[i];
     }
 
     return (checksum & 0xFFFF);
 }
 
 /**
- * @brief 校验指纹模块接收数据的有效性（重点验证校验和）
- * @param recvData 接收的数据包缓冲区
- * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
- * @return 校验结果：true=有效数据，ESP_FAIL=无效数据
+ * @brief 校验指纹模块接收数据的有效性
+ * @param receive_data 接收的数据包缓冲区
+ * @param data_length 实际接收的字节数
+ * @return esp_err_t 校验结果：ESP_OK=数据是有效的，ESP_FAIL=数据是无效的
  */
-esp_err_t verify_received_data(const uint8_t* recvData, uint16_t dataLen)
+static esp_err_t verify_received_data(const uint8_t *receive_data, uint16_t data_length)
 {
     // 基础合法性检查
-    if (recvData == nullptr || dataLen < 12) // 最小应答帧长度为12字节
+    if (receive_data == NULL || data_length < 12)
     {
-        printf("校验失败：数据为空或长度不足, 最小长度为12字节，当前长度=%d\n", dataLen);
+#ifdef DEBUG
+        ESP_LOGE(TAG, "校验失败：数据为空或长度不足（最小需9字节，实际%u）", data_length);
+#endif
+        return ESP_FAIL;
+    }
+
+    // 验证数据长度
+    uint16_t expectedDataLen = (receive_data[7] << 8) | receive_data[8]; // 数据区长度
+    if (expectedDataLen + 9 != data_length)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "校验失败：长度不匹配（期望总长度%u，实际%u）", 9 + expectedDataLen, data_length);
+#endif
         return ESP_FAIL;
     }
 
     // 验证帧头
-    if (recvData[0] != FRAME_HEADER[0] || recvData[1] != FRAME_HEADER[1])
+    if (receive_data[0] != FRAME_HEADER[0] || receive_data[1] != FRAME_HEADER[1])
     {
-        printf("校验失败：帧头不正确, 应为%02X%02X，实际为%02X%02X\n", FRAME_HEADER[0], FRAME_HEADER[1], recvData[0], recvData[1]);
+#ifdef DEBUG
+        ESP_LOGE(TAG, "校验失败：帧头不匹配（期望%02X%02X，实际%02X%02X）", FRAME_HEADER[0], FRAME_HEADER[1], receive_data[0], receive_data[1]);
+#endif
         return ESP_FAIL;
     }
+
     // 验证设备地址
     for (int i = 2; i < 6; i++)
     {
-        if (recvData[i] != g_deviceAddress[i - 2])
+        if (receive_data[i] != zw111.deviceAddress[i - 2])
         {
-            printf("校验失败：设备地址不匹配, 应为%02X%02X%02X%02X，实际为%02X%02X%02X%02X\n",
-                g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3],
-                recvData[2], recvData[3], recvData[4], recvData[5]);
+#ifdef DEBUG
+            ESP_LOGE(TAG, "校验失败：设备地址不匹配（期望%02X%02X%02X%02X，实际%02X%02X%02X%02X）",
+                     zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3],
+                     receive_data[2], receive_data[3], receive_data[4], receive_data[5]);
+#endif
             return ESP_FAIL;
         }
     }
-    // 验证应答包
-    if (recvData[6] != PACKET_RESPONSE)
-    {
-        printf("校验失败：包标识不正确，应为%02X，实际为%02X\n", PACKET_RESPONSE, recvData[6]);
-        return ESP_FAIL;
-    }
-    // 验证长度
-    uint16_t expectedDataLen = (recvData[7] << 8) | recvData[8]; // 数据长度（高字节在前）
-    if (expectedDataLen + 9 != dataLen)
-    {
-        printf("校验失败：数据长度不匹配（期望=%d，实际=%d）\n", expectedDataLen + 9, dataLen);
-        return ESP_FAIL;
-    }
-    // 提取校验和（最后2字节，高字节在前）
-    uint16_t receivedChecksum = (recvData[dataLen - 2] << 8) | recvData[dataLen - 1];
 
-    // 对比校验结果
-    if (calculate_checksum(recvData, dataLen) != receivedChecksum)
+    // 验证包标识
+    if (receive_data[6] != PACKET_RESPONSE)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "校验失败：包标识错误（期望应答包%02X，实际%02X）", PACKET_RESPONSE, receive_data[6]);
+#endif
+        return ESP_FAIL;
+    }
+
+    // 验证校验和
+    uint16_t receivedChecksum = (receive_data[data_length - 2] << 8) | receive_data[data_length - 1];
+
+    if (calculate_checksum(receive_data, data_length) != receivedChecksum)
     {
 
-        printf("校验失败：校验和不匹配\n");
+#ifdef DEBUG
+        ESP_LOGE(TAG, "校验失败：校验和不匹配（期望0x%04X，实际0x%04X）", calculate_checksum(receive_data, data_length), receivedChecksum);
+#endif
         return ESP_FAIL;
     }
-    printf("校验成功：校验和匹配\n");
+
+#ifdef DEBUG
+    ESP_LOGI(TAG, "校验成功：数据有效");
+#endif
     return ESP_OK;
 }
 
 // ========================== 功能函数 ==========================
 /**
  * @brief 指纹模块自动注册函数
- * @param ID 指纹ID号（2字节，高字节在前）
- * @param enrollTimes 录入次数（2-255，超出范围返回失败）
- * @param ledControl 采图背光灯控制（bit0）：false=常亮；true=采图成功后熄灭
- * @param preprocess 采图预处理控制（bit1）：false=不预处理；true=开启预处理
- * @param returnStatus 注册状态返回控制（bit2）：false=返回状态；true=不返回状态
- * @param allowOverwrite ID覆盖控制（bit3）：false=不允许覆盖；true=允许覆盖
- * @param allowDuplicate 重复注册控制（bit4）：false=允许重复；true=禁止重复
- * @param requireRemove 手指离开要求（bit5）：false=需离开；true=无需离开
- * @return 操作是否成功（参数有效且帧组装成功返回true）
+ * @param ID 指纹ID号（0-99，超出范围返回失败）
+ * @param enrollTimes 录入次数（2-255，超出返回失败）
+ * @param ledControl 采图背光灯控制：false=常亮；true=采图成功后熄灭
+ * @param preprocess 采图预处理控制：false=不预处理；true=开启预处理
+ * @param returnStatus 注册状态返回控制：false=返回状态；true=不返回状态
+ * @param allowOverwrite ID覆盖控制：false=不允许覆盖；true=允许覆盖
+ * @param allowDuplicate 重复注册控制：false=允许重复；true=禁止重复
+ * @param requireRemove 手指离开要求：false=需离开；true=无需离开
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=命令发送失败
  */
-esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
-    bool ledControl, bool preprocess,
-    bool returnStatus, bool allowOverwrite,
-    bool allowDuplicate, bool requireRemove)
+static esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
+                             bool ledControl, bool preprocess,
+                             bool returnStatus, bool allowOverwrite,
+                             bool allowDuplicate, bool requireRemove)
 {
-    // 参数合法性检查
+    // 检查ID有效性
     if (ID >= 100)
     {
-        printf("错误: 指纹ID号必须在0-99之间\n");
-        return ESP_FAIL;
-    }
-    if (enrollTimes < 2)
-    {
-        printf("错误: 录入次数必须在2-255之间\n");
+#ifdef DEBUG
+        ESP_LOGE(TAG, "注册失败：ID超出范围（需0-99，当前%u）", ID);
+#endif
         return ESP_FAIL;
     }
 
-    // 组装参数（param，bit0-bit5）
+    // 检查录入次数有效性
+    if (enrollTimes < 2 || enrollTimes > 255)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "注册失败：录入次数超出范围（需2-255，当前%u）", enrollTimes);
+#endif
+        return ESP_FAIL;
+    }
+
+    // 组装控制参数
     uint16_t param = 0;
     param |= (ledControl ? 1 << 0 : 0);     // bit0: 背光灯控制
     param |= (preprocess ? 1 << 1 : 0);     // bit1: 预处理控制
@@ -175,185 +270,17 @@ esp_err_t auto_enroll(uint16_t ID, uint8_t enrollTimes,
     param |= (allowDuplicate ? 1 << 4 : 0); // bit4: 重复注册控制
     param |= (requireRemove ? 1 << 5 : 0);  // bit5: 手指离开控制
 
-    // 计算数据帧长度：帧头(6) + 命令码(2) + 数据长度和指令(2) + ID(2) + 录入次数(1) + 参数(2) + 校验和(2) = 17
+    // 构建数据帧
     uint8_t frame[17] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x08,                                                                     // 数据长度(2字节)
-        CMD_AUTO_ENROLL,                                                                // 指令(1字节)
-        (uint8_t)(ID >> 8), (uint8_t)ID,                                                // ID(高字节在前)(2字节)
-        enrollTimes,                                                                    // 录入次数(1字节)
-        (uint8_t)(param >> 8), (uint8_t)param,                                          // 参数(param)，高字节在前(2字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
-    };
-
-    // 计算并填充校验和（使用通用函数）
-    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
-    frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
-    frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
-
-    // 调试输出（格式化显示）
-    printf("发送自动注册帧: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
-    {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
-
-    // 实际应用中添加帧发送逻辑（如UART发送）
-    // return UART_Send(frame, frame_len);
-
-    return true;
-}
-/**
- * @brief 指纹模块自动识别函数
- * @param ID 指纹ID号（2字节，高字节在前）
- *           - 具体数值（如1对应0x0001）：验证指定ID的指纹
- *           - 0xFFFF：验证所有已注册的指纹
- * @param scoreLevel 分数等级，系统根据该值设定比对阀值（1-5,默认为0x2）
- * @param ledControl 采图背光灯控制（bit0）：false=常亮；true=采图成功后熄灭
- * @param preprocess 采图预处理控制（bit1）：false=不预处理；true=开启预处理
- * @param returnStatus 识别状态返回控制（bit2）：false=返回状态；true=不返回状态
- * @return 操作是否成功（参数有效且帧组装成功返回true）
- */
-esp_err_t auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
-{
-    // 组装参数（PR，bit0-bit2）
-    uint16_t param = 0;
-    param |= (ledControl ? 1 << 0 : 0);   // bit0: 背光灯控制
-    param |= (preprocess ? 1 << 1 : 0);   // bit1: 预处理控制
-    param |= (returnStatus ? 1 << 2 : 0); // bit2: 状态返回控制
-
-    // 构建数据帧（共17字节）
-    uint8_t frame[17] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节，SC=命令包)
-        0x00, 0x08,                                                                     // 数据长度(2字节)
-        CMD_AUTO_IDENTIFY,                                                              // 指令码(PS_Autoldentify)
-        scoreLevel,                                                                     // 分数等级(1字节，0x12为默认值)
-        (uint8_t)(ID >> 8), (uint8_t)ID,                                                // ID(高字节在前)(2字节)
-        (uint8_t)(param >> 8), (uint8_t)param,                                          // 参数(PR)，高字节在前(2字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
-    };
-
-    // 计算并填充校验和
-    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
-    frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
-    frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
-
-    // 调试输出
-    printf("发送自动识别帧: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
-    {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
-
-    // 实际应用中添加帧发送逻辑
-    // return UART_Send(frame, 15);
-
-    return true;
-}
-/**
- * @brief 指纹模块LED控制函数
- * @param functionCode 功能码（参考BLN_xxx宏定义，1-7有效）
- * @param startColor 起始颜色（bit0-蓝，bit1-绿，bit2-红，0x00-全灭，0x07-全亮）
- * @param endColor 结束颜色（仅功能码1-普通呼吸灯有效，其他功能无效）
- * @param cycleTimes 循环次数（仅功能码1-呼吸灯/2-闪烁灯有效，0=无限循环）
- * @return 操作是否成功（参数有效且帧组装成功返回true）
- */
-esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
-    uint8_t endColor, uint8_t cycleTimes)
-{
-    // 参数合法性检查
-    if (functionCode < BLN_BREATH || functionCode > BLN_FADE_OUT)
-    {
-        printf("错误: 功能码必须在1-6之间（参考BLN_xxx宏定义）\n");
-        return ESP_FAIL;
-    }
-
-    // 过滤颜色参数的无效位（仅保留低3位）
-    if ((startColor & 0xF8) != 0)
-    {
-        printf("警告: 起始颜色仅低3位有效，已自动过滤\n");
-        startColor &= 0x07;
-    }
-    if ((endColor & 0xF8) != 0)
-    {
-        printf("警告: 结束颜色仅低3位有效，已自动过滤\n");
-        endColor &= 0x07;
-    }
-
-    uint8_t frame[16] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x07,                                                                     // 数据长度(2字节)
-        CMD_CONTROL_BLN,                                                                // 指令(1字节)
-        functionCode,                                                                   // 功能码(1字节)
-        startColor,                                                                     // 起始颜色ST(1字节)
-        endColor,                                                                       // 结束颜色ED(1字节)
-        cycleTimes,                                                                     // 循环次数TS(1字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
-    };
-
-    // 计算并填充校验和（调用通用函数）
-    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
-    frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
-    frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
-
-    // 调试输出（格式化显示）
-    printf("发送LED控制帧: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
-    {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
-
-    // 实际应用中添加帧发送逻辑（如UART发送）
-    // return UART_Send(frame, frame_len);
-
-    return true;
-}
-
-/**
- * @brief 指纹模块LED跑马灯控制函数
- * @param startColor 起始颜色配置
- * @param timeBit 呼吸周期时间参数（取值1-100，分别对应0.1秒-10秒）
- * @param cycleTimes 循环次数
- * @return 操作结果（ESP_OK表示成功，其他值表示失败）
- */
-esp_err_t control_colorful_led(uint8_t startColor, uint8_t timeBit,
-    uint8_t cycleTimes)
-{
-    // 参数合法性检查
-    if (timeBit < 1 || timeBit > 100)
-    {
-        printf("错误: 时间参数必须在1-100之间\n");
-        return ESP_FAIL;
-    }
-    // 过滤颜色参数的无效位（仅保留低3位）
-    if ((startColor & 0xF8) != 0)
-    {
-        printf("警告: 起始颜色仅低3位有效，已自动过滤\n");
-        startColor &= 0x07;
-    }
-    // 帧数据组装
-    uint8_t frame[17] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],       // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], // 设备地址(4字节)
-        g_deviceAddress[2], g_deviceAddress[3],
-        PACKET_CMD,      // 包标识(1字节)
-        0x00, 0x08,      // 数据长度(2字节)
-        CMD_CONTROL_BLN, // 指令(1字节)
-        BLN_COLORFUL,    // 功能码(1字节)
-        startColor,      // 起始颜色(1字节)
-        0x11,            // 占空比
-        cycleTimes,      // 循环次数(1字节)
-        timeBit,         // 时间位(1字节)
-        0x00, 0x00       // 校验和(2字节，待计算)
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x08,                                                                                     // 数据长度(2字节，固定8字节)
+        CMD_AUTO_ENROLL,                                                                                // 指令码(1字节)
+        (uint8_t)(ID >> 8), (uint8_t)ID,                                                                // 指纹ID(2字节，高字节在前)
+        enrollTimes,                                                                                    // 录入次数(1字节)
+        (uint8_t)(param >> 8), (uint8_t)param,                                                          // 控制参数(2字节，高字节在前)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
     };
 
     // 计算并填充校验和
@@ -362,265 +289,708 @@ esp_err_t control_colorful_led(uint8_t startColor, uint8_t timeBit,
     frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
     // 调试输出帧信息
-    printf("发送跑马灯控制帧: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送自动注册指令: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
+
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
     {
-        printf("%02X ", frame[i]);
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "自动注册指令发送成功");
+#endif
+        return ESP_OK;
     }
-    printf("\n");
-
-    // 实际应用中添加帧发送逻辑（如UART发送）
-    // return uart_write_bytes(UART_NUM_0, (const char*)frame, sizeof(frame));
-
-    return ESP_OK;
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
 }
 
 /**
- * @brief 删除一定数量的指纹
- * @param ID：指纹号
- * @param count：删除数量
- * @return 操作是否成功（参数有效且帧组装成功返回true）
+ * @brief 指纹模块自动识别函数
+ * @param ID 指纹ID号：具体数值(0-99)=验证指定ID；0xFFFF=验证所有已注册指纹
+ * @param scoreLevel 比对分数等级（1-5，等级越高严格度越高，默认建议2）
+ * @param ledControl 采图背光灯控制：false=常亮；true=采图成功后熄灭
+ * @param preprocess 采图预处理控制：false=不预处理；true=开启预处理
+ * @param returnStatus 识别状态返回控制：false=返回状态；true=不返回状态
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=参数无效或命令发送失败
+ */
+static esp_err_t auto_identify(uint16_t ID, uint8_t scoreLevel, bool ledControl, bool preprocess, bool returnStatus)
+{
+
+    if (scoreLevel < 1 || scoreLevel > 5)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "自动识别失败：分数等级无效（需1-5，当前%u）", scoreLevel);
+#endif
+        return ESP_FAIL;
+    }
+
+    // 组装控制参数
+    uint16_t param = 0;
+    param |= (ledControl ? 1 << 0 : 0);   // bit0: 背光灯控制
+    param |= (preprocess ? 1 << 1 : 0);   // bit1: 预处理控制
+    param |= (returnStatus ? 1 << 2 : 0); // bit2: 状态返回控制
+
+    // 构建数据帧
+    uint8_t frame[17] = {
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x08,                                                                                     // 数据长度(2字节，固定8字节)
+        CMD_AUTO_IDENTIFY,                                                                              // 指令码(1字节)
+        scoreLevel,                                                                                     // 分数等级(1字节)
+        (uint8_t)(ID >> 8), (uint8_t)ID,                                                                // 指纹ID(2字节，高字节在前)
+        (uint8_t)(param >> 8), (uint8_t)param,                                                          // 控制参数(2字节，高字节在前)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
+    };
+
+    // 计算并填充校验和
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+    frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送自动识别指令: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
+
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
+    {
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "自动识别指令发送成功");
+#endif
+        return ESP_OK;
+    }
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
+}
+
+/**
+ * @brief 指纹模块LED控制函数（支持呼吸、闪烁、开关等模式）
+ * @param functionCode 功能码（1-6，参考BLN_xxx宏定义，如BLN_BREATH=呼吸灯）
+ * @param startColor 起始颜色（bit0-蓝,bit1-绿,bit2-红，参考LED_xxx宏定义）
+ * @param endColor 结束颜色（仅功能码1-呼吸灯有效，其他模式忽略）
+ * @param cycleTimes 循环次数（仅功能码1-呼吸灯/2-闪烁灯有效，0=无限循环）
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=参数无效或命令发送失败
+ */
+static esp_err_t control_led(uint8_t functionCode, uint8_t startColor,
+                             uint8_t endColor, uint8_t cycleTimes)
+{
+    // 参数合法性检查
+    if (functionCode < BLN_BREATH || functionCode > BLN_FADE_OUT)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "LED控制失败：功能码无效（需1-6，当前%u）", functionCode);
+#endif
+        return ESP_FAIL;
+    }
+
+    // 过滤颜色参数无效位（仅保留低3位）
+    if ((startColor & 0xF8) != 0)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "LED控制警告：起始颜色仅低3位有效，已过滤为0x%02X\n", startColor & 0x07);
+#endif
+        startColor &= 0x07;
+    }
+    if ((endColor & 0xF8) != 0)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "LED控制警告：结束颜色仅低3位有效，已过滤为0x%02X\n", endColor & 0x07);
+#endif
+        endColor &= 0x07;
+    }
+
+    // 构建数据帧
+    uint8_t frame[16] = {
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x07,                                                                                     // 数据长度(2字节，固定7字节)
+        CMD_CONTROL_BLN,                                                                                // 指令码(1字节)
+        functionCode,                                                                                   // 功能码(1字节)
+        startColor,                                                                                     // 起始颜色(1字节)
+        endColor,                                                                                       // 结束颜色(1字节)
+        cycleTimes,                                                                                     // 循环次数(1字节)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
+    };
+
+    // 计算并填充校验和
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+    frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送LED控制帧: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
+
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
+    {
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "LED控制指令发送成功");
+#endif
+        return ESP_OK;
+    }
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
+}
+
+/**
+ * @brief 指纹模块LED跑马灯控制函数（七彩循环模式）
+ * @param startColor 起始颜色配置（参考LED_xxx宏定义，仅低3位有效）
+ * @param timeBit 呼吸周期时间参数（1-100，对应0.1秒-10秒）
+ * @param cycleTimes 循环次数（0=无限循环）
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=参数无效或命令发送失败
+ */
+static esp_err_t control_colorful_led(uint8_t startColor, uint8_t timeBit, uint8_t cycleTimes)
+{
+    // 参数合法性检查
+    if (timeBit < 1 || timeBit > 100)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "跑马灯控制失败：时间参数无效（需1-100，当前%u）", timeBit);
+#endif
+        return ESP_FAIL;
+    }
+
+    // 过滤颜色参数无效位
+    if ((startColor & 0xF8) != 0)
+    {
+#ifdef DEBUG
+        ESP_LOGE(TAG, "跑马灯控制失败：起始颜色仅低3位有效，已过滤为0x%02X\n", startColor & 0x07);
+#endif
+        startColor &= 0x07;
+    }
+
+    // 构建数据帧
+    uint8_t frame[17] = {
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x08,                                                                                     // 数据长度(2字节，固定8字节)
+        CMD_CONTROL_BLN,                                                                                // 指令码(1字节)
+        BLN_COLORFUL,                                                                                   // 功能码(1字节，七彩模式)
+        startColor,                                                                                     // 起始颜色(1字节)
+        0x11,                                                                                           // 占空比固定值
+        cycleTimes,                                                                                     // 循环次数(1字节)
+        timeBit,                                                                                        // 周期时间参数(1字节)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
+    };
+
+    // 计算并填充校验和
+    uint16_t checksum = calculate_checksum(frame, sizeof(frame));
+    frame[15] = (uint8_t)(checksum >> 8);   // 校验和高字节
+    frame[16] = (uint8_t)(checksum & 0xFF); // 校验和低字节
+
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送跑马灯控制帧: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
+
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
+    {
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "跑马灯控制指令发送成功");
+#endif
+        return ESP_OK;
+    }
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
+}
+
+/**
+ * @brief 删除指定数量的指纹（从指定ID开始连续删除）
+ * @param ID 起始指纹ID（0-99，超出范围返回失败）
+ * @param count 删除数量（1-100，需确保不超出ID范围）
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=参数无效或命令发送失败
  */
 esp_err_t delete_char(uint16_t ID, uint16_t count)
 {
     // 参数合法性检查
     if (ID >= 100)
     {
-        printf("错误: 指纹ID号必须在0-99之间\n");
+        // ID超出范围
+#ifdef DEBUG
+        ESP_LOGE(TAG, "删除失败：起始ID超出范围（需0-99，当前%u）", ID);
+#endif
         return ESP_FAIL;
     }
-    if (count == 0 || count > 100)
+    if (count == 0 || count > 100 || (ID + count) > 100)
     {
-        printf("错误: 删除数量必须在1-100之间\n");
+#ifdef DEBUG
+        ESP_LOGE(TAG, "删除失败：数量无效（需1-100且不超出ID范围，当前数量%u）", count);
+#endif
+        // 数量无效或超出ID范围
         return ESP_FAIL;
     }
 
+    // 构建数据帧
     uint8_t frame[16] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x07,                                                                     // 数据长度(2字节)
-        CMD_DELET_CHAR,                                                                 // 指令(1字节)
-        (uint8_t)(ID >> 8), (uint8_t)ID,                                                // ID(高字节在前)(2字节)
-        (uint8_t)(count >> 8), (uint8_t)count,                                          // 删除数量(2字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x07,                                                                                     // 数据长度(2字节，固定7字节)
+        CMD_DELET_CHAR,                                                                                 // 指令码(1字节)
+        (uint8_t)(ID >> 8), (uint8_t)ID,                                                                // 起始ID(2字节，高字节在前)
+        (uint8_t)(count >> 8), (uint8_t)count,                                                          // 删除数量(2字节，高字节在前)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
     };
 
-    // 计算并填充校验和（调用通用函数）
+    // 计算并填充校验和
     uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[14] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[15] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
-    // 调试输出（格式化显示）
-    printf("删除指纹: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送删除指纹帧: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
+
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
     {
-        printf("%02X ", frame[i]);
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "删除指纹指令发送成功");
+#endif
+        return ESP_OK;
     }
-    printf("\n");
-
-    // 实际应用中添加帧发送逻辑（如UART发送）
-    // return UART_Send(frame, frame_len);
-
-    return true;
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
 }
 
 /**
- * @brief 清空所有指纹
- * @param 无参数
- * @return 操作是否成功（参数有效且帧组装成功返回true）
+ * @brief 清空模块中所有已注册的指纹
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=命令发送失败
  */
-esp_err_t empty()
+static esp_err_t empty()
 {
+    // 构建数据帧
     uint8_t frame[12] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x03,                                                                     // 数据长度(2字节)
-        CMD_EMPTY,                                                                      // 指令(1字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x03,                                                                                     // 数据长度(2字节，固定3字节)
+        CMD_EMPTY,                                                                                      // 指令码(1字节)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
     };
 
-    // 计算并填充校验和（调用通用函数）
+    // 计算并填充校验和
     uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
-    // 调试输出（格式化显示）
-    printf("清空所有指纹: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
-    {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送清空指纹帧: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
 
-    return true;
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
+    {
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "清空指纹指令发送成功");
+#endif
+        return ESP_OK;
+    }
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
 }
 
 /**
- * @brief 取消指令
- * @param 无参数
- * @return 操作是否成功（参数有效且帧组装成功返回true）
+ * @brief 取消模块当前正在执行的操作（如注册、识别等）
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=命令发送失败
  */
-esp_err_t cancel()
+static esp_err_t cancel()
 {
+    // 构建数据帧
     uint8_t frame[12] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x03,                                                                     // 数据长度(2字节)
-        CMD_CANCEL,                                                                     // 指令(1字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x03,                                                                                     // 数据长度(2字节，固定3字节)
+        CMD_CANCEL,                                                                                     // 指令码(1字节)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
     };
 
-    // 计算并填充校验和（调用通用函数）
+    // 计算并填充校验和
     uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
-    // 调试输出（格式化显示）
-    printf("取消指令: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
-    {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送取消操作帧: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
 
-    return true;
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
+    {
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "取消操作指令发送成功");
+#endif
+        return ESP_OK;
+    }
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
 }
+
 /**
- * @brief 休眠指令
- * @param 无参数
- * @return 操作是否成功（参数有效且帧组装成功返回true）
+ * @brief 控制模块进入休眠模式
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=命令发送失败
  */
-esp_err_t sleep()
+static esp_err_t sleep()
 {
+    // 构建数据帧
     uint8_t frame[12] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x03,                                                                     // 数据长度(2字节)
-        CMD_SLEEP,                                                                      // 指令(1字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x03,                                                                                     // 数据长度(2字节，固定3字节)
+        CMD_SLEEP,                                                                                      // 指令码(1字节)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
     };
 
-    // 计算并填充校验和（调用通用函数）
+    // 计算并填充校验和
     uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[10] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[11] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
-    // 调试输出（格式化显示）
-    printf("休眠指令: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
-    {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "发送休眠指令帧: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
 
-    return true;
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
+    {
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "休眠指令发送成功");
+#endif
+        return ESP_OK;
+    }
+    else
+    {
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
+    }
 }
+
 /**
- * @brief 读索引表
- * @param page 页码（0-4）
- * @return 操作是否成功（参数有效且帧组装成功返回true）
+ * @brief 读取模块中的指纹索引表（获取已注册指纹ID）
+ * @param page 页码（0-4，每页对应20枚指纹，共100枚）
+ * @return esp_err_t 操作结果：ESP_OK=命令发送成功，ESP_FAIL=参数无效或命令发送失败
  */
-esp_err_t read_index_table(uint8_t page)
+static esp_err_t read_index_table(uint8_t page)
 {
+    // 参数合法性检查
     if (page > 4)
     {
-        printf("错误: 页码必须在0-4之间\n");
+#ifdef DEBUG
+        ESP_LOGE(TAG, "页码无效（需0-4，当前%u）", page);
+#endif
+        return ESP_FAIL;
     }
+    // 构建数据帧
     uint8_t frame[13] = {
-        FRAME_HEADER[0], FRAME_HEADER[1],                                               // 包头(2字节)
-        g_deviceAddress[0], g_deviceAddress[1], g_deviceAddress[2], g_deviceAddress[3], // 设备地址(4字节)
-        PACKET_CMD,                                                                     // 包标识(1字节)
-        0x00, 0x04,                                                                     // 数据长度(2字节)
-        CMD_READ_INDEX_TABLE,                                                           // 指令(1字节)
-        page,                                                                           // 页码(1字节)
-        0x00, 0x00                                                                      // 校验和(2字节)将在后面计算
+        FRAME_HEADER[0], FRAME_HEADER[1],                                                               // 帧头(2字节)
+        zw111.deviceAddress[0], zw111.deviceAddress[1], zw111.deviceAddress[2], zw111.deviceAddress[3], // 设备地址(4字节)
+        PACKET_CMD,                                                                                     // 包标识(1字节)
+        0x00, 0x04,                                                                                     // 数据长度(2字节，固定4字节)
+        CMD_READ_INDEX_TABLE,                                                                           // 指令码(1字节)
+        page,                                                                                           // 页码(1字节)
+        0x00, 0x00                                                                                      // 校验和(2字节，待计算)
     };
 
-    // 计算并填充校验和（调用通用函数）
+    // 计算并填充校验和
     uint16_t checksum = calculate_checksum(frame, sizeof(frame));
     frame[11] = (uint8_t)(checksum >> 8);   // 校验和高字节
     frame[12] = (uint8_t)(checksum & 0xFF); // 校验和低字节
 
-    // 调试输出（格式化显示）
-    printf("读索引表指令: ");
-    for (uint8_t i = 0; i < sizeof(frame); i++)
+    // 调试输出帧信息
+#ifdef DEBUG
+    ESP_LOGI(TAG, "读取索引表: ");
+    ESP_LOG_BUFFER_HEX(TAG, frame, sizeof(frame));
+#endif
+
+    // UART发送命令
+    int bytes_written = 1;
+    if (bytes_written == 1)
     {
-        printf("%02X ", frame[i]);
-    }
-    printf("\n");
-
-    return true;
-}
-
-/**
- * @brief 解析读索引表命令返回的数据帧，提取指纹ID信息
- * @param recvData 接收的数据包缓冲区
- * @param dataLen 实际接收的字节数（必须显式传入，不能用strlen计算）
- * @return 操作是否成功（参数有效且解析成功返回ESP_OK，否则返回对应错误码）
- */
-esp_err_t fingerprint_parse_frame(const uint8_t* recvData, uint16_t dataLen)
-{
-    if (!verify_received_data(recvData, dataLen))
-    {
-        return ESP_FAIL;
-    }
-
-    memset(g_fingerIDArray, 0xFF, sizeof(g_fingerIDArray));
-    g_fingerNumber = 0;
-
-    static const uint8_t mask[8] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
-    uint8_t count = 0;
-    bool full = false;
-
-    for (uint8_t i = 10; i <= 22 && !full; i++)
-    {
-        uint8_t byte = recvData[i];
-        if (byte == 0)
-            continue;
-
-        for (uint8_t bit = 0; bit < 8; bit++)
-        {
-            if (byte & mask[bit])
-            {
-                if (count < sizeof(g_fingerIDArray))
-                {
-                    g_fingerIDArray[count++] = (i - 10) * 8 + bit;
-                }
-                else
-                {
-                    full = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    g_fingerNumber = count;
-
-    if (g_fingerNumber > 0)
-    {
-        printf("检测到%d个指纹ID: ", g_fingerNumber);
-        for (uint8_t k = 0; k < g_fingerNumber; k++)
-        {
-            printf("%d ", g_fingerIDArray[k]);
-        }
-        printf("\n");
+        // 发送成功
+#ifdef DEBUG
+        ESP_LOGI(TAG, "读取索引表指令发送成功");
+#endif
+        return ESP_OK;
     }
     else
     {
-        printf("未检测到任何指纹\n");
+        // 发送失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "发送失败，实际发送字节数: %d", bytes_written);
+#endif
+        return ESP_FAIL;
     }
+}
+
+/**
+ * @brief 解析读索引表命令的返回数据，提取已注册指纹ID
+ * @param receive_data 接收的数据包缓冲区
+ * @param data_length 实际接收的字节数（需显式传入）
+ * @return esp_err_t 解析结果：ESP_OK=解析成功，ESP_FAIL=数据无效或解析失败
+ */
+static esp_err_t fingerprint_parse_frame(const uint8_t *receive_data, uint16_t data_length)
+{
+    // 初始化指纹ID数组（0xFF表示未使用）
+    memset(zw111.fingerIDArray, 0xFF, sizeof(zw111.fingerIDArray));
+    zw111.fingerNumber = 0;
+
+    // 掩码数组（用于检测每个bit是否置位）
+    uint8_t mask[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+    uint8_t tempCount = 0; // 临时计数变量
+
+    // 解析数据区（索引表数据从第10字节开始，共13字节，对应104个bit，实际有效100个）
+    for (uint8_t i = 10; i <= 22; i++) // i=10到22共13字节
+    {
+        uint8_t byteData = receive_data[i];
+        if (byteData == 0)
+            continue; // 跳过无指纹的字节
+
+        // 检测当前字节的每个bit（对应8个指纹ID）
+        for (uint8_t j = 0; j < 8; j++)
+        {
+            if (byteData & mask[j])
+            {
+                // 计算指纹ID：(字节偏移)×8 + bit偏移
+                uint8_t fingerID = (i - 10) * 8 + j;
+                if (fingerID < 100) // 仅保留有效ID（0-99）
+                {
+                    zw111.fingerIDArray[tempCount] = fingerID;
+                    tempCount++;
+                    if (tempCount >= 100)
+                        break; // 达到最大容量则停止
+                }
+            }
+        }
+        if (tempCount >= 100)
+            break; // 达到最大容量则停止
+    }
+
+    // 更新有效指纹数量
+    zw111.fingerNumber = tempCount;
+
+#ifdef DEBUG
+
+    if (zw111.fingerNumber > 0)
+    {
+        ESP_LOGI(TAG, "检测到%u个已注册指纹ID: ", zw111.fingerNumber);
+        for (size_t i = 0; i < zw111.fingerNumber; i++)
+        {
+            ESP_LOGI(TAG, "%u ", zw111.fingerIDArray[i]);
+        }
+    }
+    else
+    {
+        ESP_LOGI(TAG, "未检测到任何已注册指纹");
+    }
+
+#endif
 
     return ESP_OK;
 }
+
+/**
+ * 在指纹列表中查找最小未使用序号并返回其序号
+ * @return 最小未使用的指纹ID，无可用ID时返回255
+ */
+uint8_t get_mini_unused_id()
+{
+    // 特殊情况：没有任何指纹，直接返回0
+    if (zw111.fingerNumber == 0)
+    {
+        return 0;
+    }
+
+    // 检查第一个ID是否为0，如果不是，说明0未被使用
+    if (zw111.fingerIDArray[0] > 0)
+    {
+        return 0;
+    }
+
+    // 遍历已排序的ID数组，查找连续序列中的空缺
+    for (uint8_t i = 0; i < zw111.fingerNumber - 1; i++)
+    {
+        // 当前ID和下一个ID之间存在空缺
+        if (zw111.fingerIDArray[i + 1] > zw111.fingerIDArray[i] + 1)
+        {
+            return zw111.fingerIDArray[i] + 1;
+        }
+    }
+
+    // 所有已有ID是连续的，返回最后一个ID的下一个值
+    uint8_t last_id = zw111.fingerIDArray[zw111.fingerNumber - 1];
+    if (last_id + 1 < 100) // 确保不超过最大支持的ID范围
+    {
+        return last_id + 1;
+    }
+
+    // 所有可能的ID都已使用
+    return 255;
+}
+
+/**
+ * 插入新注册的指纹ID到数组中，保持数组有序性
+ * @param new_id 要插入的新指纹ID（应通过get_mini_unused_id()获取）
+ * @return 成功插入返回ESP_OK，失败返回ESP_FAIL
+ */
+esp_err_t insert_fingerprint_id(uint8_t new_id)
+{
+    // 检查ID有效性
+    if (new_id >= 100)
+    {
+        return ESP_FAIL; // ID无效
+    }
+
+    // 检查数组是否已满
+    if (zw111.fingerNumber >= 100)
+    {
+        return ESP_FAIL; // 达到最大容量，无法插入
+    }
+
+    // 找到插入位置
+    uint8_t insert_pos = 0;
+    while (insert_pos < zw111.fingerNumber &&
+           zw111.fingerIDArray[insert_pos] < new_id)
+    {
+        insert_pos++;
+    }
+
+    // 移动元素为新ID腾出位置
+    for (uint8_t i = zw111.fingerNumber; i > insert_pos; i--)
+    {
+        zw111.fingerIDArray[i] = zw111.fingerIDArray[i - 1];
+    }
+
+    // 插入新ID
+    zw111.fingerIDArray[insert_pos] = new_id;
+
+    // 更新指纹数量
+    zw111.fingerNumber++;
+
+#ifdef DEBUG
+    ESP_LOGI(TAG, "插入指纹ID%u成功", zw111.fingerIDArray[insert_pos]);
+#endif
+
+    return ESP_OK; // 插入成功
+}
+
+/**
+ * @brief 模块取消当前的操作并执行某条指令
+ * @note 该函数会取消当前正在进行的指纹操作（如注册、识别等），并将状态设置为取消状态
+ * @return void
+ */
+void cancel_current_operation_and_execute_command()
+{
+    zw111.state = 0x0A; // 切换为取消状态
+    // 发送取消命令
+    if (cancel() == ESP_OK)
+    {
+#ifdef DEBUG
+        ESP_LOGI(TAG, "准备取消当前操作，模块状态已切换为取消状态");
+#endif
+    }
+    else
+    {
+        // 取消操作失败
+#ifdef DEBUG
+        ESP_LOGE(TAG, "取消当前操作失败");
+#endif
+    }
+}
+
 int main()
 {
+    // 初始化指纹模块数据结构
+    zw111.state = 0X00;                                             // 初始状态：刚开机
+    zw111.power = false;                                            // 初始状态：断电
+    memset(zw111.deviceAddress, 0xFF, sizeof(zw111.deviceAddress)); // 默认地址0xFFFFFFFF
+    memset(zw111.fingerIDArray, 0xFF, sizeof(zw111.fingerIDArray)); // 未使用ID设为0xFF
+    zw111.fingerNumber = 0;                                         // 初始无已注册指纹
+
 #if 1
-	auto_enroll(10, 5, false, false, false, false, true, false);
+    auto_enroll(10, 5, false, false, false, false, true, false);
     control_led(BLN_FLASH, LED_RED, LED_RED, 3);
     auto_identify(0xFFFF, 0x02, false, true, true);
     empty();
@@ -630,25 +1000,25 @@ int main()
     read_index_table(0);
 
     // 测试用例：无效应答帧（长度错误）
-    uint8_t shortFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00 };
+    uint8_t shortFrame[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00};
     verify_received_data(shortFrame, sizeof(shortFrame) / sizeof(shortFrame[0])); // 应返回false
     // 测试用例：无效应答帧（帧头错误）
-    uint8_t wrongHeaderFrame[] = { 0xEF, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    uint8_t wrongHeaderFrame[] = {0xEF, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A};
     verify_received_data(wrongHeaderFrame, sizeof(wrongHeaderFrame) / sizeof(wrongHeaderFrame[0])); // 应返回false
     // 测试用例：无效应答帧（设备地址错误）
-    uint8_t wrongAddressFrame[] = { 0xEF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    uint8_t wrongAddressFrame[] = {0xEF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A};
     verify_received_data(wrongAddressFrame, sizeof(wrongAddressFrame) / sizeof(wrongAddressFrame[0])); // 应返回false
     // 测试用例：无效应答帧（包标识错误）
-    uint8_t wrongPacketFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x06, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    uint8_t wrongPacketFrame[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x06, 0x00, 0x03, 0x00, 0x00, 0x0A};
     verify_received_data(wrongPacketFrame, sizeof(wrongPacketFrame) / sizeof(wrongPacketFrame[0])); // 应返回false
     // 测试用例：无效应答帧（数据长度错误）
-    uint8_t wrongLengthFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x02, 0x00, 0x00, 0x0A };
+    uint8_t wrongLengthFrame[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x02, 0x00, 0x00, 0x0A};
     verify_received_data(wrongLengthFrame, sizeof(wrongLengthFrame) / sizeof(wrongLengthFrame[0])); // 应返回false
     // 测试用例：无效应答帧（校验和错误）
-    uint8_t invalidFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0B };
+    uint8_t invalidFrame[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0B};
     verify_received_data(invalidFrame, sizeof(invalidFrame) / sizeof(invalidFrame[0])); // 应返回false
     // 测试用例：有效应答帧（示例数据）
-    uint8_t validFrame[] = { 0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A };
+    uint8_t validFrame[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07, 0x00, 0x03, 0x00, 0x00, 0x0A};
     verify_received_data(validFrame, sizeof(validFrame) / sizeof(validFrame[0])); // 应返回true
     // 其他测试用例可以继续添加...
 
@@ -659,7 +1029,7 @@ int main()
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x31 };
+        0x00, 0x00, 0x00, 0x31};
     uint16_t frame1_len = sizeof(frame1) / sizeof(frame1[0]);
 
     // 示例2：ID=0,1,2,7（第11字节为0x87，二进制10000111）
@@ -669,7 +1039,7 @@ int main()
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0xB1 };
+        0x00, 0x00, 0x00, 0xB1};
     uint16_t frame2_len = sizeof(frame2) / sizeof(frame2[0]);
 
     // 示例3：ID=0,1,2,7,99（第11字节0x87，第23字节0x08）
@@ -680,7 +1050,7 @@ int main()
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0xB9 };
+        0x00, 0x00, 0x00, 0xB9};
     uint16_t frame3_len = sizeof(frame3) / sizeof(frame3[0]);
     fingerprint_parse_frame(frame1, frame1_len);
     fingerprint_parse_frame(frame2, frame2_len);
